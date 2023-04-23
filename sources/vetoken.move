@@ -132,6 +132,28 @@ module vetoken::vetoken {
         *next_index_locked_amount = *next_index_locked_amount + coin::value(&vetoken.locked);
     }
 
+    public fun increase_lock_amount<CoinType>(account: &signer, increment_lock: Coin<CoinType>) acquires VeTokenInfo, VeTokenStore {
+        let account_addr = signer::address_of(account);
+        assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
+        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_UNREGISTERED);
+
+        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(@vetoken);
+        checkpoint<CoinType>(vetoken_info);
+
+        // update vetoken store
+        let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
+        let vetoken = &mut vetoken_store.vetoken;
+        let now_weeks = now_weeks();
+        assert!(now_weeks < vetoken.end_weeks, ERR_VETOKEN_ENDED);
+        let increment_lock_amount = coin::value(&increment_lock);
+        coin::merge(&mut vetoken.locked, increment_lock);
+
+        // update vetoken info
+        let current_index = vetoken.end_weeks - now_weeks - 1;
+        let current_index_locked_amount = vector::borrow_mut(&mut vetoken_info.locked_amounts, current_index);
+        *current_index_locked_amount = *current_index_locked_amount + increment_lock_amount;
+    }
+
     public fun unlock<CoinType>(account: &signer): Coin<CoinType> acquires VeTokenInfo, VeTokenStore {
         assert!(is_account_registered<CoinType>(signer::address_of(account)), ERR_VETOKEN_UNREGISTERED);
 
@@ -390,6 +412,29 @@ module vetoken::vetoken {
         timestamp::fast_forward_seconds(3 * 7 * 24 * 60 * 60);
         increase_lock_duration<FakeCoin>(account, 3);
         assert!(balance<FakeCoin>(signer::address_of(account)) == 4000 / 5, 0);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, account = @0xA)]
+    fun increase_lock_amount_ok(
+        aptos_framework: &signer,
+        vetoken: &signer,
+        account: &signer
+    ) acquires VeTokenInfo, VeTokenStore {
+        initialize_for_test(aptos_framework, vetoken, 5);
+
+        // lock
+        register<FakeCoin>(account);
+        lock(account, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000), 2);
+        assert!(balance<FakeCoin>(signer::address_of(account)) == 2000 / 5, 0);
+
+        // increase lock amount
+        increase_lock_amount<FakeCoin>(account, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000));
+        assert!(balance<FakeCoin>(signer::address_of(account)) == 4000 / 5, 0);
+
+        // 1 weeks later, further increase lock amount
+        timestamp::fast_forward_seconds(7 * 24 * 60 * 60);
+        increase_lock_amount<FakeCoin>(account, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000));
+        assert!(balance<FakeCoin>(signer::address_of(account)) == 3000 / 5, 0);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, u1 = @0xA, u2 = @0xB, u3 = @0xC, u4 = @0xD)]
