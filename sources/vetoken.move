@@ -19,6 +19,8 @@ module vetoken::vetoken {
     const ERR_VETOKEN_UNREGISTERED: u64 = 3;
     const ERR_VETOKEN_UNINITIALIZED: u64 = 4;
     const ERR_VETOKEN_MAX_DURATION_WEEKS_ZERO: u64 = 5;
+    const ERR_VETOKEN_DURATION_INCREMENT_OUT_OF_BOUND: u64 = 6;
+    const ERR_VETOKEN_ENDED: u64 = 7;
 
     struct VeToken<phantom CoinType> has store {
         locked: Coin<CoinType>,
@@ -88,6 +90,46 @@ module vetoken::vetoken {
         vetoken_store.vetoken.end_weeks = start_weeks + duration_weeks;
 
         coin::merge(&mut vetoken_store.vetoken.locked, lock_coin);
+    }
+
+    public fun increase_lock_duration<CoinType>(
+        account: &signer,
+        increment_weeks: u64
+    ) acquires VeTokenInfo, VeTokenStore {
+        let account_addr = signer::address_of(account);
+        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_UNREGISTERED);
+        assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
+        assert!(increment_weeks >= 1, ERR_VETOKEN_DURATION_INCREMENT_OUT_OF_BOUND);
+
+        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
+        let max_duration_weeks = vetoken_info.max_duration_weeks;
+
+        checkpoint<CoinType>(vetoken_info);
+
+        let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
+        let vetoken = &mut vetoken_store.vetoken;
+        let now_weeks = now_weeks();
+        assert!(now_weeks < vetoken.end_weeks, ERR_VETOKEN_ENDED);
+        assert!(
+            vetoken.end_weeks - now_weeks + increment_weeks <= max_duration_weeks,
+            ERR_VETOKEN_DURATION_INCREMENT_OUT_OF_BOUND
+        );
+
+        // b/c:
+        // - weeks_past = now_weeks - start_weeks
+        // - start_index = duration_weeks - 1 = end_weeks - start_weeks - 1
+        // therefore, current_index = start_index - weeks_past = end_weeks - now_weeks - 1
+        // note that current_index and next_index are guaranteed to be in-bound given the above asserts
+        let current_index = vetoken.end_weeks - now_weeks - 1;
+        let next_index = current_index + increment_weeks;
+        vetoken.end_weeks = vetoken.end_weeks + increment_weeks;
+
+        // locked_amounts[current_index] -= vetoken.locked
+        // locked_amounts[next_index] += vetoken.locked
+        let now_index_locked_amount = vector::borrow_mut(&mut vetoken_info.locked_amounts, current_index);
+        *now_index_locked_amount = *now_index_locked_amount - coin::value(&vetoken.locked);
+        let next_index_locked_amount = vector::borrow_mut(&mut vetoken_info.locked_amounts, next_index);
+        *next_index_locked_amount = *next_index_locked_amount + coin::value(&vetoken.locked);
     }
 
     public fun unlock<CoinType>(account: &signer): Coin<CoinType> acquires VeTokenInfo, VeTokenStore {
@@ -325,6 +367,29 @@ module vetoken::vetoken {
         // early unlock: try to unlock in 6 days, even though the lock period is 1 week (7 days)
         timestamp::fast_forward_seconds(6 * 24 * 60 * 60);
         coin_helper::burn_coin_for_test(vetoken, unlock<FakeCoin>(account));
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, account = @0xA)]
+    fun increase_lock_duration_ok(
+        aptos_framework: &signer,
+        vetoken: &signer,
+        account: &signer
+    ) acquires VeTokenInfo, VeTokenStore {
+        initialize_for_test(aptos_framework, vetoken, 5);
+
+        // lock
+        register<FakeCoin>(account);
+        lock(account, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000), 2);
+        assert!(balance<FakeCoin>(signer::address_of(account)) == 2000 / 5, 0);
+
+        // extend 2 weeks
+        increase_lock_duration<FakeCoin>(account, 2);
+        assert!(balance<FakeCoin>(signer::address_of(account)) == 4000 / 5, 0);
+
+        // 3 weeks later, extend 3 more weeks
+        timestamp::fast_forward_seconds(3 * 7 * 24 * 60 * 60);
+        increase_lock_duration<FakeCoin>(account, 3);
+        assert!(balance<FakeCoin>(signer::address_of(account)) == 4000 / 5, 0);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, u1 = @0xA, u2 = @0xB, u3 = @0xC, u4 = @0xD)]
