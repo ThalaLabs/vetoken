@@ -1,8 +1,7 @@
 module vetoken::vetoken {
     use std::signer;
-    use std::vector;
 
-    use aptos_std::math64;
+    use aptos_std::table::{Self, Table};
     use aptos_std::type_info;
     use aptos_framework::coin::{Self, Coin};
     use aptos_framework::timestamp;
@@ -13,19 +12,30 @@ module vetoken::vetoken {
     /// Errors
     ///
 
-    const ERR_VETOKEN_INFO_ADDRESS_MISMATCH: u64 = 0;
-    const ERR_VETOKEN_NOT_ENDED: u64 = 1;
-    const ERR_VETOKEN_DURATION_WEEKS_ZERO: u64 = 2;
-    const ERR_VETOKEN_UNREGISTERED: u64 = 3;
-    const ERR_VETOKEN_UNINITIALIZED: u64 = 4;
-    const ERR_VETOKEN_MAX_DURATION_WEEKS_ZERO: u64 = 5;
-    const ERR_VETOKEN_DURATION_INCREMENT_OUT_OF_BOUND: u64 = 6;
-    const ERR_VETOKEN_ENDED: u64 = 7;
+    // Initialization
+    const ERR_VETOKEN_INITIALIZED: u64 = 0;
+    const ERR_VETOKEN_UNINITIALIZED: u64 = 1;
+
+    // VeToken Errors
+    const ERR_VETOKEN_LOCKED: u64 = 2;
+    const ERR_VETOKEN_NOT_LOCKED: u64 = 3;
+    const ERR_VETOKEN_ZERO_LOCK_AMOUNT: u64 = 4;
+    const ERR_VETOKEN_INVALID_LOCK_DURATION: u64 = 5;
+    const ERR_VETOKEN_INVALID_END_WEEK: u64 = 6;
+
+    // Other
+    const ERR_VETOKEN_ACCOUNT_UNREGISTERED: u64 = 100;
+    const ERR_VETOKEN_COIN_ADDRESS_MISMATCH: u64 = 101;
+
+    ///
+    /// Constants
+    ///
+
+    const SECONDS_IN_WEEK: u64 = 7 * 24 * 60 * 60;
 
     struct VeToken<phantom CoinType> has store {
         locked: Coin<CoinType>,
-        start_weeks: u64,
-        end_weeks: u64,
+        locked_end_week: u64,
     }
 
     /// Holder of VeToken
@@ -35,29 +45,20 @@ module vetoken::vetoken {
 
     /// Keep track of global info about VeToken
     struct VeTokenInfo<phantom CoinType> has key {
-        max_duration_weeks: u64,
+        max_locked_weeks: u64,
 
-        /// Stores locked amounts in vetoken
-        /// assertion: vector length = max_duration_weeks
-        /// i-th element = summed locked amount that is expired in (i + 1) weeks
-        /// for example, if locked_amounts[10] = 1000, it means 1000 coins will be locked for 11 more weeks
-        locked_amounts: vector<u64>,
-
-        /// number of weeks since epoch as of the latest checkpoint
-        last_checkpoint_weeks: u64,
+        // Stores the total locked amounts in vetoken where the key i represents
+        // the amount of vetokens that will be unlockable in week (i + 1)
+        total_locked_amounts: Table<u64, u128>,
     }
 
-    public entry fun initialize<CoinType>(account: &signer, max_duration_weeks: u64) {
-        assert!(
-            account_address<VeToken<CoinType>>() == signer::address_of(account),
-            ERR_VETOKEN_INFO_ADDRESS_MISMATCH,
-        );
-        assert!(max_duration_weeks > 0, ERR_VETOKEN_MAX_DURATION_WEEKS_ZERO);
-
+    public entry fun initialize<CoinType>(account: &signer, max_locked_weeks: u64) {
+        assert!(!initialized<CoinType>(), ERR_VETOKEN_INITIALIZED);
+        assert!(account_address<VeToken<CoinType>>() == signer::address_of(account), ERR_VETOKEN_COIN_ADDRESS_MISMATCH);
+        assert!(max_locked_weeks > 0, ERR_VETOKEN_INVALID_LOCK_DURATION);
         move_to(account, VeTokenInfo<CoinType> {
-            max_duration_weeks,
-            locked_amounts: new_vector_filled(max_duration_weeks, 0),
-            last_checkpoint_weeks: 0
+            max_locked_weeks,
+            total_locked_amounts: table::new()
         });
     }
 
@@ -66,116 +67,109 @@ module vetoken::vetoken {
         move_to(account, VeTokenStore<CoinType> {
             vetoken: VeToken<CoinType> {
                 locked: coin::zero(),
-                start_weeks: 0,
-                end_weeks: 0,
+                locked_end_week: 0,
             }
         });
     }
 
-    public fun lock<CoinType>(account: &signer, lock_coin: Coin<CoinType>, duration_weeks: u64) acquires VeTokenInfo, VeTokenStore {
+    /// Lock `CoinType` up until `end_week`. Time is referenced in terms of the week number in order to keep an accurate
+    /// total supply of `VeToken` on a week-by-week basis. This implies that locked tokens are only eligible to be unlocked
+    /// at the start of a new week's period (starting from the Unix epoch).
+    public fun lock<CoinType>(account: &signer, coin: Coin<CoinType>, end_week: u64) acquires VeTokenInfo, VeTokenStore {
         let account_addr = signer::address_of(account);
-        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_UNREGISTERED);
-        assert!(duration_weeks >= 1, ERR_VETOKEN_DURATION_WEEKS_ZERO);
+        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
-        let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(signer::address_of(account));
+        let amount = coin::value(&coin);
+        assert!(amount > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
+
+        let now_week = now_weeks();
         let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
-
-        checkpoint(vetoken_info);
-
-        let locked_amount = vector::borrow_mut(&mut vetoken_info.locked_amounts, duration_weeks - 1);
-        *locked_amount = *locked_amount + coin::value(&lock_coin);
-
-        let start_weeks = now_weeks();
-        vetoken_store.vetoken.start_weeks = start_weeks;
-        vetoken_store.vetoken.end_weeks = start_weeks + duration_weeks;
-
-        coin::merge(&mut vetoken_store.vetoken.locked, lock_coin);
-    }
-
-    public fun increase_lock_duration<CoinType>(
-        account: &signer,
-        increment_weeks: u64
-    ) acquires VeTokenInfo, VeTokenStore {
-        let account_addr = signer::address_of(account);
-        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_UNREGISTERED);
-        assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
-        assert!(increment_weeks >= 1, ERR_VETOKEN_DURATION_INCREMENT_OUT_OF_BOUND);
-
-        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
-        let max_duration_weeks = vetoken_info.max_duration_weeks;
-
-        checkpoint<CoinType>(vetoken_info);
+        assert!(end_week > now_week && end_week - now_week <= vetoken_info.max_locked_weeks, ERR_VETOKEN_INVALID_END_WEEK);
 
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
-        let vetoken = &mut vetoken_store.vetoken;
-        let now_weeks = now_weeks();
-        assert!(now_weeks < vetoken.end_weeks, ERR_VETOKEN_ENDED);
-        assert!(
-            vetoken.end_weeks - now_weeks + increment_weeks <= max_duration_weeks,
-            ERR_VETOKEN_DURATION_INCREMENT_OUT_OF_BOUND
-        );
+        assert!(coin::value(&vetoken_store.vetoken.locked) == 0, ERR_VETOKEN_LOCKED);
 
-        // b/c:
-        // - weeks_past = now_weeks - start_weeks
-        // - start_index = duration_weeks - 1 = end_weeks - start_weeks - 1
-        // therefore, current_index = start_index - weeks_past = end_weeks - now_weeks - 1
-        // note that current_index and next_index are guaranteed to be in-bound given the above asserts
-        let current_index = vetoken.end_weeks - now_weeks - 1;
-        let next_index = current_index + increment_weeks;
-        vetoken.end_weeks = vetoken.end_weeks + increment_weeks;
+        // Update the total locked amount in the week prior to unlock.
+        let total_locked_amount = table::borrow_mut_with_default(&mut vetoken_info.total_locked_amounts, end_week - 1, 0);
+        *total_locked_amount = *total_locked_amount + (amount as u128);
 
-        // locked_amounts[current_index] -= vetoken.locked
-        // locked_amounts[next_index] += vetoken.locked
-        let now_index_locked_amount = vector::borrow_mut(&mut vetoken_info.locked_amounts, current_index);
-        *now_index_locked_amount = *now_index_locked_amount - coin::value(&vetoken.locked);
-        let next_index_locked_amount = vector::borrow_mut(&mut vetoken_info.locked_amounts, next_index);
-        *next_index_locked_amount = *next_index_locked_amount + coin::value(&vetoken.locked);
+        // Update the VeToken
+        vetoken_store.vetoken.locked_end_week = end_week;
+        coin::merge(&mut vetoken_store.vetoken.locked, coin);
     }
 
-    public fun increase_lock_amount<CoinType>(account: &signer, increment_lock: Coin<CoinType>) acquires VeTokenInfo, VeTokenStore {
+    /// Extend the period in which the `VeToken` remains locked
+    public fun increase_lock_duration<CoinType>(account: &signer, increment_weeks: u64) acquires VeTokenInfo, VeTokenStore {
+        let account_addr = signer::address_of(account);
+        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
+        assert!(increment_weeks >= 1, ERR_VETOKEN_INVALID_LOCK_DURATION);
+
+        let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
+        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
+
+        let now_week = now_weeks();
+        let new_end_week = vetoken_store.vetoken.locked_end_week + increment_weeks;
+        assert!(now_week < vetoken_store.vetoken.locked_end_week, ERR_VETOKEN_NOT_LOCKED);
+        assert!(new_end_week - now_week <= vetoken_info.max_locked_weeks, ERR_VETOKEN_INVALID_LOCK_DURATION);
+
+        // Update the total locked amounts
+        // locked_amounts[current_end_week - 1] -= vetoken.locked
+        // locked_amounts[new_end_week - 1] += vetoken.locked
+        let locked_amount = (coin::value(&vetoken_store.vetoken.locked) as u128);
+        let total_locked_amounts = &mut vetoken_info.total_locked_amounts;
+        let current_total_locked_amount = table::borrow_mut(total_locked_amounts, vetoken_store.vetoken.locked_end_week - 1);
+        *current_total_locked_amount = *current_total_locked_amount - locked_amount;
+
+        let new_total_locked_amount = table::borrow_mut_with_default(total_locked_amounts, new_end_week - 1, 0);
+        *new_total_locked_amount = *new_total_locked_amount + locked_amount;
+
+        // Update the VeToken
+        vetoken_store.vetoken.locked_end_week = new_end_week;
+    }
+
+    /// Extend how much `CoinType` is locked within `VeToken`.
+    public fun increase_lock_amount<CoinType>(account: &signer, coin: Coin<CoinType>) acquires VeTokenInfo, VeTokenStore {
         let account_addr = signer::address_of(account);
         assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
-        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_UNREGISTERED);
 
-        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(@vetoken);
-        checkpoint<CoinType>(vetoken_info);
+        let amount = (coin::value(&coin) as u128);
+        assert!(amount > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
 
-        // update vetoken store
-        let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
-        let vetoken = &mut vetoken_store.vetoken;
         let now_weeks = now_weeks();
-        assert!(now_weeks < vetoken.end_weeks, ERR_VETOKEN_ENDED);
-        let increment_lock_amount = coin::value(&increment_lock);
-        coin::merge(&mut vetoken.locked, increment_lock);
+        let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
+        assert!(now_weeks < vetoken_store.vetoken.locked_end_week, ERR_VETOKEN_NOT_LOCKED);
 
-        // update vetoken info
-        let current_index = vetoken.end_weeks - now_weeks - 1;
-        let current_index_locked_amount = vector::borrow_mut(&mut vetoken_info.locked_amounts, current_index);
-        *current_index_locked_amount = *current_index_locked_amount + increment_lock_amount;
+        // Update the total locked amount in the week prior to unlock.
+        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
+        let total_locked_amount = table::borrow_mut(&mut vetoken_info.total_locked_amounts, vetoken_store.vetoken.locked_end_week - 1);
+        *total_locked_amount = *total_locked_amount + amount;
+
+        // Update the VeToken
+        coin::merge(&mut vetoken_store.vetoken.locked, coin);
     }
 
-    public fun unlock<CoinType>(account: &signer): Coin<CoinType> acquires VeTokenInfo, VeTokenStore {
-        assert!(is_account_registered<CoinType>(signer::address_of(account)), ERR_VETOKEN_UNREGISTERED);
+    /// Unlock a `VeToken` that reached `end_week`.
+    public fun unlock<CoinType>(account: &signer): Coin<CoinType> acquires VeTokenStore {
+        let account_addr = signer::address_of(account);
+        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
-        let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(signer::address_of(account));
-        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
-        assert!(vetoken_store.vetoken.end_weeks <= now_weeks(), ERR_VETOKEN_NOT_ENDED);
+        let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
+        assert!(coin::value(&vetoken_store.vetoken.locked) > 0, ERR_VETOKEN_NOT_LOCKED);
 
-        checkpoint(vetoken_info);
+        let now_week = now_weeks();
+        assert!(now_week >= vetoken_store.vetoken.locked_end_week, ERR_VETOKEN_LOCKED);
 
-        vetoken_store.vetoken.start_weeks = 0;
-        vetoken_store.vetoken.end_weeks = 0;
+        // Update the VeToken
+        vetoken_store.vetoken.locked_end_week = 0;
         coin::extract_all(&mut vetoken_store.vetoken.locked)
     }
 
     /// Compute the weight of `account_addr` relative to the amount of `CoinType` locked.
     public fun weight<CoinType>(account_addr: address): FixedPoint64 acquires VeTokenInfo, VeTokenStore {
-        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_UNREGISTERED);
+        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
         let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);
-        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
-
-        checkpoint(vetoken_info);
+        let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
 
         // We explicity return zero to avoid the edge case where `total_strength == 0` which would cause
         // a div by zero error. This would occur on initiailzation where no tokens have been locked yet
@@ -183,6 +177,8 @@ module vetoken::vetoken {
         let balance = unnormalized_balance(&vetoken_store.vetoken);
         if (balance == 0) return fixed_point64::zero();
 
+        // We dont use `fixed_point64::fraction` since `total_supply` is a u128. Casting this to a u64
+        // can cause an arithmetic error -- hece we construct the fraction manually
         let total_supply = unnormalized_total_supply(vetoken_info);
         fixed_point64::from_u128((balance << 64) / total_supply)
     }
@@ -201,12 +197,11 @@ module vetoken::vetoken {
 
     #[view]
     public fun balance<CoinType>(account_addr: address): u64 acquires VeTokenInfo, VeTokenStore {
-        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_UNREGISTERED);
+        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
         let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);
         let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
 
-        // No need to checkpoint `vetoken_info` as we aren't interfacing with the aggregate amounts
-        let balance = unnormalized_balance(&vetoken_store.vetoken) / (vetoken_info.max_duration_weeks as u128);
+        let balance = unnormalized_balance(&vetoken_store.vetoken) / (vetoken_info.max_locked_weeks as u128);
         (balance as u64)
     }
 
@@ -214,54 +209,34 @@ module vetoken::vetoken {
     public fun total_supply<CoinType>(): u128 acquires VeTokenInfo {
         assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
         let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
-        checkpoint(vetoken_info);
-
-        unnormalized_total_supply(vetoken_info) / (vetoken_info.max_duration_weeks as u128)
+        unnormalized_total_supply(vetoken_info) / (vetoken_info.max_locked_weeks as u128)
     }
 
     fun unnormalized_balance<CoinType>(vetoken: &VeToken<CoinType>): u128 {
-        let now_weeks = now_weeks();
-        if (now_weeks >= vetoken.end_weeks) return 0;
+        let now_week = now_weeks();
+        if (now_week >= vetoken.locked_end_week) return 0;
 
-        // we do not divide by max_duration_weeks because it will be eliminated when dividing
-        // by unnormalized_total_supply for computing the weight
-        (coin::value(&vetoken.locked) * (vetoken.end_weeks - now_weeks) as u128)
+        // we do not divide by the the max lock duration because it will be eliminated when
+        // dividing by unnormalized_total_supply for computing the weight
+        (coin::value(&vetoken.locked) * (vetoken.locked_end_week - now_week) as u128)
     }
 
     fun unnormalized_total_supply<CoinType>(vetoken_info: &VeTokenInfo<CoinType>): u128 {
-        let supply = 0u128;
+        let now_week = now_weeks();
+
         let i = 0;
-        while (i < vector::length(&vetoken_info.locked_amounts)) {
-            let locked_amount = *vector::borrow(&vetoken_info.locked_amounts, i);
-            // we do not divide by max_duration_weeks because it will be eliminated when dividing
-            // by unnormalized_total_supply for computing the weight
-            supply = supply + (locked_amount * (i + 1) as u128);
+        let supply = 0u128;
+        while (i < vetoken_info.max_locked_weeks) {
+            // we do not divide by the the max lock duration because it will be eliminated when
+            // dividing by unnormalized_total_supply in computing the weight
+            let locked_amount = *table::borrow_with_default(&vetoken_info.total_locked_amounts, now_week + i, &0);
+            supply = supply + (locked_amount * (i + 1 as u128));
+
             i = i + 1;
         };
+
         supply
     }
-
-    /// Checkpoint ensures that VeTokenInfo::locked_amounts is up-to-date
-    /// If last checkpoint is in this week, no need to change locked_amounts
-    /// If last checkpoint is older than max_duration_weeks, then locked_amounts should be set all zeros
-    /// Otherwise, should left-shift locked_amounts by weeks_past, then fill the tailing spots with zeros
-    /// For example, let's say the last checkpoint was 2 weeks ago, and given max_duration_weeks = 4, and
-    /// locked_amounts = [1000, 500, 2000, 1500]. Since 2 weeks has past since last checkpoint,
-    /// the first 2 elements in locked_amounts are out-dated and should be evicted, therefore the latest
-    /// locked_amounts = [2000, 1500, 0, 0].
-    fun checkpoint<CoinType>(vetoken_info: &mut VeTokenInfo<CoinType>) {
-        let now_weeks = now_weeks();
-
-        let weeks_past = now_weeks - vetoken_info.last_checkpoint_weeks;
-        if (weeks_past == 0) return;
-
-        vetoken_info.last_checkpoint_weeks = now_weeks;
-        left_shift(&mut vetoken_info.locked_amounts, math64::min(vetoken_info.max_duration_weeks, weeks_past));
-    }
-
-    ///
-    /// Helpers
-    ///
 
     fun account_address<Type>(): address {
         let type_info = type_info::type_of<Type>();
@@ -269,61 +244,8 @@ module vetoken::vetoken {
     }
 
     fun now_weeks(): u64 {
-        timestamp::now_seconds() / (7 * 24 * 60 * 60)
+        timestamp::now_seconds() / SECONDS_IN_WEEK
     }
-
-    fun new_vector_filled(n: u64, e: u64): vector<u64> {
-        let v = vector::empty<u64>();
-
-        let i = 0;
-        while (i < n) {
-            vector::push_back(&mut v, e);
-            i = i + 1;
-        };
-
-        v
-    }
-
-    /// In-place left shift a vector for `s` positions and fill the tailing blanks with zeros
-    fun left_shift(v: &mut vector<u64>, s: u64) {
-        let n = vector::length(v);
-        let i = 0;
-        while (i < n) {
-            if (i < n - s) {
-                vector::swap(v, i, i + s)
-            } else {
-                *vector::borrow_mut(v, i) = 0;
-            };
-            i = i + 1;
-        };
-    }
-
-    // Utility tests
-
-    #[test]
-    fun new_vector_filled_ok() {
-        assert!(new_vector_filled(5, 0) == vector[0, 0, 0, 0, 0], 0);
-        assert!(new_vector_filled(5, 1) == vector[1, 1, 1, 1, 1], 0);
-    }
-
-    #[test]
-    fun left_shift_ok() {
-        let v = vector<u64>[1, 2, 3, 4, 5, 6];
-        assert!(left_shift_result(v, 0) == vector<u64>[1, 2, 3, 4, 5, 6], 0);
-        assert!(left_shift_result(v, 1) == vector<u64>[2, 3, 4, 5, 6, 0], 0);
-        assert!(left_shift_result(v, 2) == vector<u64>[3, 4, 5, 6, 0, 0], 0);
-        assert!(left_shift_result(v, 3) == vector<u64>[4, 5, 6, 0, 0, 0], 0);
-        assert!(left_shift_result(v, 4) == vector<u64>[5, 6, 0, 0, 0, 0], 0);
-        assert!(left_shift_result(v, 5) == vector<u64>[6, 0, 0, 0, 0, 0], 0);
-        assert!(left_shift_result(v, 6) == vector<u64>[0, 0, 0, 0, 0, 0], 0);
-    }
-
-    #[test_only]
-    fun left_shift_result(v: vector<u64>, s: u64): vector<u64> {
-        left_shift(&mut v, s);
-        v
-    }
-
 
     #[test_only]
     use std::string;
@@ -340,7 +262,7 @@ module vetoken::vetoken {
     }
 
     #[test(account = @0xA)]
-    #[expected_failure(abort_code = ERR_VETOKEN_INFO_ADDRESS_MISMATCH)]
+    #[expected_failure(abort_code = ERR_VETOKEN_COIN_ADDRESS_MISMATCH)]
     fun non_vetoken_initialize_err(account: &signer) {
         initialize<FakeCoin>(account, 52);
     }
@@ -368,7 +290,7 @@ module vetoken::vetoken {
         lock(account, lock_coin, 1);
 
         // unlock
-        timestamp::fast_forward_seconds(7 * 24 * 60 * 60);
+        timestamp::fast_forward_seconds(SECONDS_IN_WEEK);
         let unlocked = unlock<FakeCoin>(account);
         assert!(coin::value(&unlocked) == 1000, 0);
 
@@ -377,7 +299,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, account = @0xA)]
-    #[expected_failure(abort_code = ERR_VETOKEN_NOT_ENDED)]
+    #[expected_failure(abort_code = ERR_VETOKEN_LOCKED)]
     fun early_unlock_err(aptos_framework: &signer, vetoken: &signer, account: &signer) acquires VeTokenInfo, VeTokenStore {
         initialize_for_test(aptos_framework, vetoken, 52);
 
@@ -387,16 +309,12 @@ module vetoken::vetoken {
         lock(account, lock_coin, 1);
 
         // early unlock: try to unlock in 6 days, even though the lock period is 1 week (7 days)
-        timestamp::fast_forward_seconds(6 * 24 * 60 * 60);
+        timestamp::fast_forward_seconds(6 * 86400);
         coin_helper::burn_coin_for_test(vetoken, unlock<FakeCoin>(account));
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, account = @0xA)]
-    fun increase_lock_duration_ok(
-        aptos_framework: &signer,
-        vetoken: &signer,
-        account: &signer
-    ) acquires VeTokenInfo, VeTokenStore {
+    fun increase_lock_duration_ok(aptos_framework: &signer, vetoken: &signer, account: &signer) acquires VeTokenInfo, VeTokenStore {
         initialize_for_test(aptos_framework, vetoken, 5);
 
         // lock
@@ -409,7 +327,7 @@ module vetoken::vetoken {
         assert!(balance<FakeCoin>(signer::address_of(account)) == 4000 / 5, 0);
 
         // 3 weeks later, extend 3 more weeks
-        timestamp::fast_forward_seconds(3 * 7 * 24 * 60 * 60);
+        timestamp::fast_forward_seconds(3 * SECONDS_IN_WEEK);
         increase_lock_duration<FakeCoin>(account, 3);
         assert!(balance<FakeCoin>(signer::address_of(account)) == 4000 / 5, 0);
     }
@@ -432,7 +350,7 @@ module vetoken::vetoken {
         assert!(balance<FakeCoin>(signer::address_of(account)) == 4000 / 5, 0);
 
         // 1 weeks later, further increase lock amount
-        timestamp::fast_forward_seconds(7 * 24 * 60 * 60);
+        timestamp::fast_forward_seconds(SECONDS_IN_WEEK);
         increase_lock_amount<FakeCoin>(account, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000));
         assert!(balance<FakeCoin>(signer::address_of(account)) == 3000 / 5, 0);
     }
@@ -440,6 +358,9 @@ module vetoken::vetoken {
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, u1 = @0xA, u2 = @0xB, u3 = @0xC, u4 = @0xD)]
     fun balance_ok(aptos_framework: &signer, vetoken: &signer, u1: &signer, u2: &signer, u3: &signer, u4: &signer) acquires VeTokenInfo, VeTokenStore {
         initialize_for_test(aptos_framework, vetoken, 3);
+
+        // no locks
+        assert!(total_supply<FakeCoin>() == 0, 0);
 
         // lock
         register<FakeCoin>(u1);
@@ -459,7 +380,7 @@ module vetoken::vetoken {
         assert!(total_supply<FakeCoin>() == 2666, 0);
 
         // 1 week later
-        timestamp::fast_forward_seconds(7 * 24 * 60 * 60);
+        timestamp::fast_forward_seconds(SECONDS_IN_WEEK);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 0, 0);
         assert!(balance<FakeCoin>(signer::address_of(u2)) == 333, 0);
         assert!(balance<FakeCoin>(signer::address_of(u3)) == 666, 0);
@@ -467,7 +388,7 @@ module vetoken::vetoken {
         assert!(total_supply<FakeCoin>() == 1000, 0);
 
         // 2 weeks later
-        timestamp::fast_forward_seconds(7 * 24 * 60 * 60);
+        timestamp::fast_forward_seconds(SECONDS_IN_WEEK);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 0, 0);
         assert!(balance<FakeCoin>(signer::address_of(u2)) == 0, 0);
         assert!(balance<FakeCoin>(signer::address_of(u3)) == 333, 0);
@@ -475,7 +396,7 @@ module vetoken::vetoken {
         assert!(total_supply<FakeCoin>() == 333, 0);
 
         // 3 weeks later
-        timestamp::fast_forward_seconds(7 * 24 * 60 * 60);
+        timestamp::fast_forward_seconds(SECONDS_IN_WEEK);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 0, 0);
         assert!(balance<FakeCoin>(signer::address_of(u2)) == 0, 0);
         assert!(balance<FakeCoin>(signer::address_of(u3)) == 0, 0);
@@ -501,12 +422,12 @@ module vetoken::vetoken {
         assert!(fp_to_percent(weight<FakeCoin>(signer::address_of(u2))) == 67, 0);
 
         // 1 week later
-        timestamp::fast_forward_seconds(7 * 24 * 60 * 60);
+        timestamp::fast_forward_seconds(SECONDS_IN_WEEK);
         assert!(fp_to_percent(weight<FakeCoin>(signer::address_of(u1))) == 0, 0); // expired
         assert!(fp_to_percent(weight<FakeCoin>(signer::address_of(u2))) == 100, 0);
 
         // 2 weeks later
-        timestamp::fast_forward_seconds(7 * 24 * 60 * 60);
+        timestamp::fast_forward_seconds(SECONDS_IN_WEEK);
         assert!(fp_to_percent(weight<FakeCoin>(signer::address_of(u1))) == 0, 0);
         assert!(fp_to_percent(weight<FakeCoin>(signer::address_of(u2))) == 0, 0);
     }
