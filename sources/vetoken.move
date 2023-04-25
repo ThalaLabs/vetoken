@@ -47,9 +47,9 @@ module vetoken::vetoken {
     struct VeTokenInfo<phantom CoinType> has key {
         max_locked_weeks: u64,
 
-        // Stores the total locked amounts in vetoken where the key i represents
-        // the amount of vetokens that will be unlockable in week (i + 1)
-        total_locked_amounts: Table<u64, u128>,
+        // Stores the total unlockable amounts in vetoken where the key i represents
+        // the amount of vetokens that will be unlockable in week i
+        total_unlockable: Table<u64, u128>,
     }
 
     public entry fun initialize<CoinType>(account: &signer, max_locked_weeks: u64) {
@@ -58,7 +58,7 @@ module vetoken::vetoken {
         assert!(max_locked_weeks > 0, ERR_VETOKEN_INVALID_LOCK_DURATION);
         move_to(account, VeTokenInfo<CoinType> {
             max_locked_weeks,
-            total_locked_amounts: table::new()
+            total_unlockable: table::new()
         });
     }
 
@@ -90,8 +90,8 @@ module vetoken::vetoken {
         assert!(coin::value(&vetoken_store.vetoken.locked) == 0, ERR_VETOKEN_LOCKED);
 
         // Update the total locked amount in the week prior to unlock.
-        let total_locked_amount = table::borrow_mut_with_default(&mut vetoken_info.total_locked_amounts, end_week - 1, 0);
-        *total_locked_amount = *total_locked_amount + (amount as u128);
+        let unlockable = table::borrow_mut_with_default(&mut vetoken_info.total_unlockable, end_week, 0);
+        *unlockable = *unlockable + (amount as u128);
 
         // Update the VeToken
         vetoken_store.vetoken.locked_end_week = end_week;
@@ -113,15 +113,15 @@ module vetoken::vetoken {
         assert!(new_end_week - now_week <= vetoken_info.max_locked_weeks, ERR_VETOKEN_INVALID_LOCK_DURATION);
 
         // Update the total locked amounts
-        // locked_amounts[current_end_week - 1] -= vetoken.locked
-        // locked_amounts[new_end_week - 1] += vetoken.locked
+        // locked_amounts[current_end_week] -= vetoken.locked
+        // locked_amounts[new_end_week] += vetoken.locked
         let locked_amount = (coin::value(&vetoken_store.vetoken.locked) as u128);
-        let total_locked_amounts = &mut vetoken_info.total_locked_amounts;
-        let current_total_locked_amount = table::borrow_mut(total_locked_amounts, vetoken_store.vetoken.locked_end_week - 1);
-        *current_total_locked_amount = *current_total_locked_amount - locked_amount;
+        let total_unlockable = &mut vetoken_info.total_unlockable;
+        let current_total_unlockable = table::borrow_mut(total_unlockable, vetoken_store.vetoken.locked_end_week);
+        *current_total_unlockable = *current_total_unlockable - locked_amount;
 
-        let new_total_locked_amount = table::borrow_mut_with_default(total_locked_amounts, new_end_week - 1, 0);
-        *new_total_locked_amount = *new_total_locked_amount + locked_amount;
+        let new_total_unlockable = table::borrow_mut_with_default(total_unlockable, new_end_week, 0);
+        *new_total_unlockable = *new_total_unlockable + locked_amount;
 
         // Update the VeToken
         vetoken_store.vetoken.locked_end_week = new_end_week;
@@ -139,10 +139,10 @@ module vetoken::vetoken {
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
         assert!(now_weeks < vetoken_store.vetoken.locked_end_week, ERR_VETOKEN_NOT_LOCKED);
 
-        // Update the total locked amount in the week prior to unlock.
+        // Update the total unlockable in the week ready for unlock.
         let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
-        let total_locked_amount = table::borrow_mut(&mut vetoken_info.total_locked_amounts, vetoken_store.vetoken.locked_end_week - 1);
-        *total_locked_amount = *total_locked_amount + amount;
+        let unlockable = table::borrow_mut(&mut vetoken_info.total_unlockable, vetoken_store.vetoken.locked_end_week);
+        *unlockable = *unlockable + amount;
 
         // Update the VeToken
         coin::merge(&mut vetoken_store.vetoken.locked, coin);
@@ -224,15 +224,15 @@ module vetoken::vetoken {
     fun unnormalized_total_supply<CoinType>(vetoken_info: &VeTokenInfo<CoinType>): u128 {
         let now_week = now_weeks();
 
-        let i = 0;
+        let end_in_weeks = 1;
         let supply = 0u128;
-        while (i < vetoken_info.max_locked_weeks) {
+        while (end_in_weeks <= vetoken_info.max_locked_weeks) {
             // we do not divide by the the max lock duration because it will be eliminated when
             // dividing by unnormalized_total_supply in computing the weight
-            let locked_amount = *table::borrow_with_default(&vetoken_info.total_locked_amounts, now_week + i, &0);
-            supply = supply + (locked_amount * (i + 1 as u128));
+            let locked_amount = *table::borrow_with_default(&vetoken_info.total_unlockable, now_week + end_in_weeks, &0);
+            supply = supply + (locked_amount * (end_in_weeks as u128));
 
-            i = i + 1;
+            end_in_weeks = end_in_weeks + 1;
         };
 
         supply
