@@ -54,7 +54,7 @@ module vetoken::vetoken {
 
     public entry fun initialize<CoinType>(account: &signer, max_locked_weeks: u64) {
         assert!(!initialized<CoinType>(), ERR_VETOKEN_INITIALIZED);
-        assert!(account_address<VeToken<CoinType>>() == signer::address_of(account), ERR_VETOKEN_COIN_ADDRESS_MISMATCH);
+        assert!(account_address<CoinType>() == signer::address_of(account), ERR_VETOKEN_COIN_ADDRESS_MISMATCH);
         assert!(max_locked_weeks > 0, ERR_VETOKEN_INVALID_LOCK_DURATION);
         move_to(account, VeTokenInfo<CoinType> {
             max_locked_weeks,
@@ -187,7 +187,7 @@ module vetoken::vetoken {
 
     #[view]
     public fun initialized<CoinType>(): bool {
-        exists<VeTokenInfo<CoinType>>(account_address<VeToken<CoinType>>())
+        exists<VeTokenInfo<CoinType>>(account_address<CoinType>())
     }
 
     #[view]
