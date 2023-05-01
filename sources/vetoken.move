@@ -280,7 +280,7 @@ module vetoken::vetoken {
 
     #[view]
     public fun initialized<CoinType>(): bool {
-        exists<VeTokenInfo<CoinType>>(account_address<VeToken<CoinType>>())
+        exists<VeTokenInfo<CoinType>>(account_address<CoinType>())
     }
 
     #[view]
