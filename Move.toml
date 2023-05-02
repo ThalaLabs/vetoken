@@ -14,3 +14,11 @@ rev = "mainnet"
 git = "https://github.com/aptos-labs/aptos-core.git"
 subdir = "aptos-move/framework/aptos-framework"
 rev = "mainnet"
+
+[dependencies.FixedPoint64]
+git = "https://github.com/ThalaLabs/fixed_point64.git"
+rev = "main"
+
+[dev-dependencies.TestUtils]
+local = "../test_utils/"
+

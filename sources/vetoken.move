@@ -347,23 +347,22 @@ module vetoken::vetoken {
     }
 
     #[test_only]
-    use vetoken::coin_helper;
+    use test_utils::coin_test;
 
     #[test_only]
     struct FakeCoin {}
-
-    #[test_only]
-    fun initialize_for_test(aptos_framework: &signer, vetoken: &signer, max_duration_epochs: u64) {
-        initialize<FakeCoin>(vetoken, max_duration_epochs);
-        timestamp::set_time_has_started_for_testing(aptos_framework);
-        coin_helper::create_coin_for_test<FakeCoin>(vetoken,
-            std::string::utf8(b"FakeCoin"), std::string::utf8(b"FC"), 8, true);
-    }
 
     #[test(account = @0xA)]
     #[expected_failure(abort_code = ERR_VETOKEN_COIN_ADDRESS_MISMATCH)]
     fun non_vetoken_initialize_err(account: &signer) {
         initialize<FakeCoin>(account, 52);
+    }
+
+    #[test_only]
+    fun initialize_for_test(aptos_framework: &signer, vetoken: &signer, max_duration_weeks: u64) {
+        initialize<FakeCoin>(vetoken, max_duration_weeks);
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+        coin_test::initialize_fake_coin_with_decimals<FakeCoin>(vetoken, 8);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, account = @0xA)]
@@ -372,7 +371,7 @@ module vetoken::vetoken {
 
         // lock
         register<FakeCoin>(account);
-        let lock_coin = coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000);
+        let lock_coin = coin_test::mint_coin<FakeCoin>(vetoken, 1000);
         lock(account, lock_coin, 1);
 
         // unlock
@@ -381,7 +380,7 @@ module vetoken::vetoken {
         assert!(coin::value(&unlocked) == 1000, 0);
 
         // cleanup
-        coin_helper::burn_coin_for_test(vetoken, unlocked);
+        coin_test::burn_coin(vetoken, unlocked);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, account = @0xA)]
@@ -391,12 +390,12 @@ module vetoken::vetoken {
 
         // lock
         register<FakeCoin>(account);
-        let lock_coin = coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000);
+        let lock_coin = coin_test::mint_coin<FakeCoin>(vetoken, 1000);
         lock(account, lock_coin, 1);
 
         // early unlock: try to unlock before the epoch ends
         timestamp::fast_forward_seconds(seconds_in_epoch() - 1);
-        coin_helper::burn_coin_for_test(vetoken, unlock<FakeCoin>(account));
+        coin_test::burn_coin(vetoken, unlock<FakeCoin>(account));
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, account = @0xA)]
@@ -405,7 +404,7 @@ module vetoken::vetoken {
 
         // lock
         register<FakeCoin>(account);
-        lock(account, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000), 2);
+        lock(account, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
         assert!(balance<FakeCoin>(signer::address_of(account)) == 2000 / 5, 0);
 
         // extend 2 epochs
@@ -424,16 +423,16 @@ module vetoken::vetoken {
 
         // lock
         register<FakeCoin>(account);
-        lock(account, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000), 2);
+        lock(account, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
         assert!(balance<FakeCoin>(signer::address_of(account)) == 2000 / 5, 0);
 
         // increase lock amount
-        increase_lock_amount<FakeCoin>(account, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000));
+        increase_lock_amount<FakeCoin>(account, coin_test::mint_coin<FakeCoin>(vetoken, 1000));
         assert!(balance<FakeCoin>(signer::address_of(account)) == 4000 / 5, 0);
 
         // 1 epochs later, further increase lock amount
         timestamp::fast_forward_seconds(seconds_in_epoch());
-        increase_lock_amount<FakeCoin>(account, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000));
+        increase_lock_amount<FakeCoin>(account, coin_test::mint_coin<FakeCoin>(vetoken, 1000));
         assert!(balance<FakeCoin>(signer::address_of(account)) == 3000 / 5, 0);
     }
 
@@ -449,10 +448,10 @@ module vetoken::vetoken {
         register<FakeCoin>(u2);
         register<FakeCoin>(u3);
         register<FakeCoin>(u4);
-        lock(u1, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000), 1);
-        lock(u2, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000), 2);
-        lock(u3, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000), 3);
-        lock(u4, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 2000), 1);
+        lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 1);
+        lock(u2, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
+        lock(u3, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 3);
+        lock(u4, coin_test::mint_coin<FakeCoin>(vetoken, 2000), 1);
 
         // at the beginning
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 333, 0);
@@ -498,8 +497,8 @@ module vetoken::vetoken {
 
         // new epoch == 1
         timestamp::fast_forward_seconds(seconds_in_epoch());
-        lock(u1, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000), 2);
-        lock(u2, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000), 3);
+        lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
+        lock(u2, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 3);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 250, 1); // 1000/4
         assert!(balance<FakeCoin>(signer::address_of(u2)) == 500, 1); // 2000/4
         assert!(total_supply<FakeCoin>() == 750, 0);
@@ -518,7 +517,7 @@ module vetoken::vetoken {
         assert!(past_total_supply<FakeCoin>(1) == 1000, 0);
 
         // introduce change in the current epoch for u1. u2 balance decays as expected
-        increase_lock_amount(u1, coin_helper::mint_coin_for_test<FakeCoin>(vetoken, 1000));
+        increase_lock_amount(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000));
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 500, 0);
         assert!(balance<FakeCoin>(signer::address_of(u2)) == 250, 0);
         assert!(total_supply<FakeCoin>() == 750, 0);
