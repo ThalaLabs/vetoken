@@ -21,4 +21,3 @@ rev = "main"
 
 [dev-dependencies.TestUtils]
 local = "../test_utils/"
-

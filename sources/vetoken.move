@@ -293,17 +293,21 @@ module vetoken::vetoken {
     }
 
     #[view]
-    public fun past_total_supply<CoinType>(epoch: u64): u128 acquires VeTokenInfo {
+    public fun unnormalized_past_total_supply<CoinType>(epoch: u64): u128 acquires VeTokenInfo {
         assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
         assert!(epoch <= now_epoch<CoinType>(), ERR_VETOKEN_INVALID_PAST_EPOCH);
 
         let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
-        let unnormalized_supply = *table::borrow_with_default(&vetoken_info.unnormalized_total_supply, epoch, &0);
-        unnormalized_supply / (vetoken_info.max_locked_epochs as u128)
+        *table::borrow_with_default(&vetoken_info.unnormalized_total_supply, epoch, &0)
     }
 
     #[view]
-    public fun past_balance<CoinType>(account_addr: address, epoch: u64): u64 acquires VeTokenInfo, VeTokenStore {
+    public fun past_total_supply<CoinType>(epoch: u64): u128 acquires VeTokenInfo {
+        unnormalized_past_total_supply<CoinType>(epoch) / (max_locked_epochs<CoinType>() as u128)
+    }
+
+    #[view]
+    public fun unnormalized_past_balance<CoinType>(account_addr: address, epoch: u64): u128 acquires VeTokenStore, VeTokenInfo {
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
         assert!(epoch <= now_epoch<CoinType>(), ERR_VETOKEN_INVALID_PAST_EPOCH);
 
@@ -316,12 +320,10 @@ module vetoken::vetoken {
         };
 
         // find the appropriate snapshot and compute the balance
-        let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
         let snapshot = find_snapshot(snapshots, epoch);
         if (epoch >= snapshot.unlockable_epoch) 0
         else {
-            let remaining_epochs = snapshot.unlockable_epoch - epoch;
-            math64::mul_div(snapshot.locked, remaining_epochs, vetoken_info.max_locked_epochs)
+            (snapshot.locked as u128) * ((snapshot.unlockable_epoch - epoch) as u128)
         }
     }
 
@@ -329,6 +331,14 @@ module vetoken::vetoken {
     public fun now_epoch<CoinType>(): u64 acquires VeTokenInfo {
         seconds_to_epoch<CoinType>(timestamp::now_seconds())
     }
+
+    #[view]
+    public fun past_balance<CoinType>(account_addr: address, epoch: u64): u64 acquires VeTokenInfo, VeTokenStore {
+        let unnormalized = unnormalized_past_balance<CoinType>(account_addr, epoch);
+        let max_locked_epochs = (max_locked_epochs<CoinType>() as u128);
+        ((unnormalized / max_locked_epochs) as u64)
+    }
+
 
     #[view]
     public fun seconds_to_epoch<CoinType>(time_seconds: u64): u64 acquires VeTokenInfo {
@@ -341,6 +351,12 @@ module vetoken::vetoken {
 
         let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
         vetoken_info.epoch_duration_seconds
+    }
+
+    #[view]
+    public fun max_locked_epochs<CoinType>(): u64 acquires VeTokenInfo {
+        let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
+        vetoken_info.max_locked_epochs
     }
 
     #[test_only]
