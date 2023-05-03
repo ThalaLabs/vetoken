@@ -29,12 +29,6 @@ module vetoken::vetoken {
     const ERR_VETOKEN_COIN_ADDRESS_MISMATCH: u64 = 101;
     const ERR_VETOKEN_INTERNAL_ERROR: u64 = 102;
 
-    ///
-    /// Constants
-    ///
-
-    const SECONDS_IN_WEEK: u64 = 7 * 24 * 60 * 60;
-
     struct VeToken<phantom CoinType> has store {
         locked: Coin<CoinType>,
         unlockable_epoch: u64,
@@ -54,25 +48,25 @@ module vetoken::vetoken {
     }
 
     struct VeTokenInfo<phantom CoinType> has key {
-        // ***NOTE*** This cannot be configurable! If this module is updated in which the
-        // account which governs `CoinType` can alter this max post-initialization, then
-        // the token snapshotting logic must also be updated such that this max is also saved
-        // alongside the snapshots in order to compute past weights & balances correctly.
+        // ***NOTE*** These values cannot be configurable! The token snapshotting logic
+        // assumes that the parameters of a VeToken is fixed post-initialization.
+
         max_locked_epochs: u64,
+        epoch_duration_seconds: u64,
 
         // Stores the total supply for a given epoch i, updated as vetokens are locked. The value
         // store is "unnormalized" meaning the (1/max_locked_epochs) factor is left out.
         unnormalized_total_supply: Table<u64, u128>,
     }
 
-    /// Initialize a `Vetoken` based on `CoinType`. The maximum duration in which a VeToken can be locked more
-    /// must be specified ahead of time and cannot be changed post initialization
-    public entry fun initialize<CoinType>(account: &signer, max_locked_epochs: u64) {
+    /// Initialize a `VeToken` based on `CoinType`. The parameters set on the VeToken are not changeable after init 
+    public entry fun initialize<CoinType>(account: &signer, max_locked_epochs: u64, epoch_duration_seconds: u64) {
         assert!(!initialized<CoinType>(), ERR_VETOKEN_INITIALIZED);
         assert!(account_address<CoinType>() == signer::address_of(account), ERR_VETOKEN_COIN_ADDRESS_MISMATCH);
         assert!(max_locked_epochs > 0, ERR_VETOKEN_INVALID_LOCK_DURATION);
         move_to(account, VeTokenInfo<CoinType> {
             max_locked_epochs,
+            epoch_duration_seconds,
             unnormalized_total_supply: table::new(),
         });
     }
@@ -96,7 +90,7 @@ module vetoken::vetoken {
         let amount = (coin::value(&coin) as u128);
         assert!(amount > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
 
-        let now_epoch = now_epoch();
+        let now_epoch = now_epoch<CoinType>();
         let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
         assert!(end_epoch > now_epoch && end_epoch - now_epoch <= vetoken_info.max_locked_epochs, ERR_VETOKEN_INVALID_END_EPOCH);
 
@@ -125,7 +119,7 @@ module vetoken::vetoken {
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
         assert!(increment_epochs >= 1, ERR_VETOKEN_INVALID_LOCK_DURATION);
 
-        let now_epoch = now_epoch();
+        let now_epoch = now_epoch<CoinType>();
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
         assert!(now_epoch < vetoken_store.vetoken.unlockable_epoch, ERR_VETOKEN_NOT_LOCKED);
 
@@ -160,7 +154,7 @@ module vetoken::vetoken {
         let amount = (coin::value(&coin) as u128);
         assert!(amount > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
 
-        let now_epoch = now_epoch();
+        let now_epoch = now_epoch<CoinType>();
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
         assert!(now_epoch < vetoken_store.vetoken.unlockable_epoch, ERR_VETOKEN_NOT_LOCKED);
 
@@ -182,14 +176,14 @@ module vetoken::vetoken {
     }
 
     /// Unlock a `VeToken` that reached `end_epoch`.
-    public fun unlock<CoinType>(account: &signer): Coin<CoinType> acquires VeTokenStore {
+    public fun unlock<CoinType>(account: &signer): Coin<CoinType> acquires VeTokenInfo, VeTokenStore {
         let account_addr = signer::address_of(account);
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
         assert!(coin::value(&vetoken_store.vetoken.locked) > 0, ERR_VETOKEN_NOT_LOCKED);
 
-        let now_epoch = now_epoch();
+        let now_epoch = now_epoch<CoinType>();
         assert!(now_epoch >= vetoken_store.vetoken.unlockable_epoch, ERR_VETOKEN_LOCKED);
 
         // Update the VeToken
@@ -290,18 +284,18 @@ module vetoken::vetoken {
 
     #[view]
     public fun total_supply<CoinType>(): u128 acquires VeTokenInfo {
-        past_total_supply<CoinType>(now_epoch())
+        past_total_supply<CoinType>(now_epoch<CoinType>())
     }
 
     #[view]
     public fun balance<CoinType>(account_addr: address): u64 acquires VeTokenInfo, VeTokenStore {
-        past_balance<CoinType>(account_addr, now_epoch())
+        past_balance<CoinType>(account_addr, now_epoch<CoinType>())
     }
 
     #[view]
     public fun past_total_supply<CoinType>(epoch: u64): u128 acquires VeTokenInfo {
         assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
-        assert!(epoch <= now_epoch(), ERR_VETOKEN_INVALID_PAST_EPOCH);
+        assert!(epoch <= now_epoch<CoinType>(), ERR_VETOKEN_INVALID_PAST_EPOCH);
 
         let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
         let unnormalized_supply = *table::borrow_with_default(&vetoken_info.unnormalized_total_supply, epoch, &0);
@@ -311,10 +305,10 @@ module vetoken::vetoken {
     #[view]
     public fun past_balance<CoinType>(account_addr: address, epoch: u64): u64 acquires VeTokenInfo, VeTokenStore {
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
-        assert!(epoch <= now_epoch(), ERR_VETOKEN_INVALID_PAST_EPOCH);
+        assert!(epoch <= now_epoch<CoinType>(), ERR_VETOKEN_INVALID_PAST_EPOCH);
 
         // ensure `epoch` is within bounds. no need to check the upper bound as the latest snapshot is valid for
-        // any future epoch up until `now_epoch()`
+        // any future epoch up until `now_epoch<CoinType>()`
         let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);
         let snapshots = &vetoken_store.snapshots;
         if (vector::is_empty(snapshots) || epoch < vector::borrow(snapshots, 0).epoch) {
@@ -332,18 +326,21 @@ module vetoken::vetoken {
     }
 
     #[view]
-    public fun now_epoch(): u64 {
-        seconds_to_epoch(timestamp::now_seconds())
+    public fun now_epoch<CoinType>(): u64 acquires VeTokenInfo {
+        seconds_to_epoch<CoinType>(timestamp::now_seconds())
     }
 
     #[view]
-    public fun seconds_to_epoch(time_seconds: u64): u64 {
-        time_seconds / seconds_in_epoch()
+    public fun seconds_to_epoch<CoinType>(time_seconds: u64): u64 acquires VeTokenInfo {
+        time_seconds / seconds_in_epoch<CoinType>()
     }
 
     #[view]
-    public fun seconds_in_epoch(): u64 {
-        SECONDS_IN_WEEK
+    public fun seconds_in_epoch<CoinType>(): u64 acquires VeTokenInfo {
+        assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
+
+        let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
+        vetoken_info.epoch_duration_seconds
     }
 
     #[test_only]
@@ -352,17 +349,20 @@ module vetoken::vetoken {
     #[test_only]
     struct FakeCoin {}
 
+    #[test_only]
+    const SECONDS_IN_WEEK: u64 = 7 * 24 * 60 * 60;
+
+    #[test_only]
+    fun initialize_for_test(aptos_framework: &signer, vetoken: &signer, max_duration_epochs: u64) {
+        initialize<FakeCoin>(vetoken, max_duration_epochs, SECONDS_IN_WEEK);
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+        coin_test::initialize_fake_coin_with_decimals<FakeCoin>(vetoken, 8);
+    }
+
     #[test(account = @0xA)]
     #[expected_failure(abort_code = ERR_VETOKEN_COIN_ADDRESS_MISMATCH)]
     fun non_vetoken_initialize_err(account: &signer) {
-        initialize<FakeCoin>(account, 52);
-    }
-
-    #[test_only]
-    fun initialize_for_test(aptos_framework: &signer, vetoken: &signer, max_duration_weeks: u64) {
-        initialize<FakeCoin>(vetoken, max_duration_weeks);
-        timestamp::set_time_has_started_for_testing(aptos_framework);
-        coin_test::initialize_fake_coin_with_decimals<FakeCoin>(vetoken, 8);
+        initialize<FakeCoin>(account, 52, SECONDS_IN_WEEK);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, account = @0xA)]
@@ -375,7 +375,7 @@ module vetoken::vetoken {
         lock(account, lock_coin, 1);
 
         // unlock
-        timestamp::fast_forward_seconds(seconds_in_epoch());
+        timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
         let unlocked = unlock<FakeCoin>(account);
         assert!(coin::value(&unlocked) == 1000, 0);
 
@@ -394,7 +394,7 @@ module vetoken::vetoken {
         lock(account, lock_coin, 1);
 
         // early unlock: try to unlock before the epoch ends
-        timestamp::fast_forward_seconds(seconds_in_epoch() - 1);
+        timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>() - 1);
         coin_test::burn_coin(vetoken, unlock<FakeCoin>(account));
     }
 
@@ -412,7 +412,7 @@ module vetoken::vetoken {
         assert!(balance<FakeCoin>(signer::address_of(account)) == 4000 / 5, 0);
 
         // 3 epochs later, extend 3 more epochs
-        timestamp::fast_forward_seconds(3 * seconds_in_epoch());
+        timestamp::fast_forward_seconds(3 * seconds_in_epoch<FakeCoin>());
         increase_lock_duration<FakeCoin>(account, 3);
         assert!(balance<FakeCoin>(signer::address_of(account)) == 4000 / 5, 0);
     }
@@ -431,7 +431,7 @@ module vetoken::vetoken {
         assert!(balance<FakeCoin>(signer::address_of(account)) == 4000 / 5, 0);
 
         // 1 epochs later, further increase lock amount
-        timestamp::fast_forward_seconds(seconds_in_epoch());
+        timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
         increase_lock_amount<FakeCoin>(account, coin_test::mint_coin<FakeCoin>(vetoken, 1000));
         assert!(balance<FakeCoin>(signer::address_of(account)) == 3000 / 5, 0);
     }
@@ -461,7 +461,7 @@ module vetoken::vetoken {
         assert!(total_supply<FakeCoin>() == 2666, 0);
 
         // 1 epoch later
-        timestamp::fast_forward_seconds(seconds_in_epoch());
+        timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 0, 0);
         assert!(balance<FakeCoin>(signer::address_of(u2)) == 333, 0);
         assert!(balance<FakeCoin>(signer::address_of(u3)) == 666, 0);
@@ -469,7 +469,7 @@ module vetoken::vetoken {
         assert!(total_supply<FakeCoin>() == 1000, 0);
 
         // 2 epochs later
-        timestamp::fast_forward_seconds(seconds_in_epoch());
+        timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 0, 0);
         assert!(balance<FakeCoin>(signer::address_of(u2)) == 0, 0);
         assert!(balance<FakeCoin>(signer::address_of(u3)) == 333, 0);
@@ -477,7 +477,7 @@ module vetoken::vetoken {
         assert!(total_supply<FakeCoin>() == 333, 0);
 
         // 3 epochs later
-        timestamp::fast_forward_seconds(seconds_in_epoch());
+        timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 0, 0);
         assert!(balance<FakeCoin>(signer::address_of(u2)) == 0, 0);
         assert!(balance<FakeCoin>(signer::address_of(u3)) == 0, 0);
@@ -496,7 +496,7 @@ module vetoken::vetoken {
         assert!(past_total_supply<FakeCoin>(0) == 0, 0);
 
         // new epoch == 1
-        timestamp::fast_forward_seconds(seconds_in_epoch());
+        timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
         lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
         lock(u2, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 3);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 250, 1); // 1000/4
@@ -509,7 +509,7 @@ module vetoken::vetoken {
         assert!(total_supply<FakeCoin>() == 1000, 0);
 
         // new epoch == 2
-        timestamp::fast_forward_seconds(seconds_in_epoch());
+        timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
 
         // (3) Persists Epoch (1)
         assert!(past_balance<FakeCoin>(signer::address_of(u1), 1) == 500, 0);
@@ -523,7 +523,7 @@ module vetoken::vetoken {
         assert!(total_supply<FakeCoin>() == 750, 0);
 
         // new_epoch == 3
-        timestamp::fast_forward_seconds(seconds_in_epoch());
+        timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
 
         // (4) Same Epoch (1)
         assert!(past_balance<FakeCoin>(signer::address_of(u1), 1) == 500, 0);
@@ -536,7 +536,7 @@ module vetoken::vetoken {
         assert!(past_total_supply<FakeCoin>(2) == 750, 0);
 
         // new_epoch == 4
-        timestamp::fast_forward_seconds(seconds_in_epoch());
+        timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
 
         // (6) All balances are expired in Epoch (3)
         assert!(past_balance<FakeCoin>(signer::address_of(u1), 3) == 0, 0);
