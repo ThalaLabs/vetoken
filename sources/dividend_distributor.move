@@ -143,10 +143,10 @@ module vetoken::dividend_distributor {
     struct FakeDividendCoin {}
 
     #[test_only]
-    fun initialize_for_test(aptos_framework: &signer, vetoken: &signer, max_duration_epochs: u64) {
+    fun initialize_for_test(aptos_framework: &signer, vetoken: &signer, min_locked_epochs: u64, max_locked_epochs: u64) {
         coin_test::initialize_fake_coin<FakeLockCoin>(vetoken);
         coin_test::initialize_fake_coin<FakeDividendCoin>(vetoken);
-        vetoken::initialize<FakeLockCoin>(vetoken, max_duration_epochs, 7 * 24 * 60 * 60);
+        vetoken::initialize<FakeLockCoin>(vetoken, min_locked_epochs, max_locked_epochs, 7 * 24 * 60 * 60);
         timestamp::set_time_has_started_for_testing(aptos_framework);
         account::create_account_for_test(signer::address_of(vetoken));
         initialize<FakeLockCoin, FakeDividendCoin>(vetoken);
@@ -154,7 +154,7 @@ module vetoken::dividend_distributor {
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
     fun past_epochs_claimable(aptos_framework: &signer, vetoken: &signer) acquires DividendDistributor {
-        initialize_for_test(aptos_framework, vetoken, 52);
+        initialize_for_test(aptos_framework, vetoken, 1, 52);
 
         let user = &account::create_account_for_test(@0xA);
         vetoken::register<FakeLockCoin>(user);
@@ -172,7 +172,7 @@ module vetoken::dividend_distributor {
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
     fun claimable_accumulate_over_epoch(aptos_framework: &signer, vetoken: &signer) acquires DividendDistributor {
-        initialize_for_test(aptos_framework, vetoken, 52);
+        initialize_for_test(aptos_framework, vetoken, 1, 52);
 
         let u1 = &account::create_account_for_test(@0xA);
         let u2 = &account::create_account_for_test(@0xB);
@@ -196,7 +196,7 @@ module vetoken::dividend_distributor {
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
     fun end_to_end_ok(aptos_framework: &signer, vetoken: &signer) acquires DividendDistributor {
-        initialize_for_test(aptos_framework, vetoken, 52);
+        initialize_for_test(aptos_framework, vetoken, 1, 52);
 
         let u1 = &account::create_account_for_test(@0xA);
         let u2 = &account::create_account_for_test(@0xB);
