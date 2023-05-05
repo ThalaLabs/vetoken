@@ -115,6 +115,7 @@ module vetoken::vetoken {
 
     /// Extend the period in which the `VeToken` remains locked
     public fun increase_lock_duration<CoinType>(account: &signer, increment_epochs: u64) acquires VeTokenInfo, VeTokenStore {
+        assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
         let account_addr = signer::address_of(account);
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
         assert!(increment_epochs >= 1, ERR_VETOKEN_INVALID_LOCK_DURATION);
@@ -148,8 +149,9 @@ module vetoken::vetoken {
 
     /// Extend how much `CoinType` is locked within `VeToken`.
     public fun increase_lock_amount<CoinType>(account: &signer, coin: Coin<CoinType>) acquires VeTokenInfo, VeTokenStore {
-        let account_addr = signer::address_of(account);
         assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
+        let account_addr = signer::address_of(account);
+        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
         let amount = (coin::value(&coin) as u128);
         assert!(amount > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
