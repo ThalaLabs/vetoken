@@ -11,7 +11,7 @@ module vetoken::dividend_distributor {
     use aptos_framework::event::{Self, EventHandle};
     use aptos_framework::timestamp;
 
-    use vetoken::vetoken::{Self, now_epoch};
+    use vetoken::vetoken::{Self, now_epoch, seconds_to_epoch};
 
     #[test_only]
     use test_utils::coin_test;
@@ -19,19 +19,23 @@ module vetoken::dividend_distributor {
     const ERR_DIVIDEND_DISTRIBUTOR_UNAUTHORIZED: u64 = 0;
 
     struct DividendDistributor<phantom LockCoin, phantom DividendCoin> has key {
+        /// Total claimable dividend
         dividend: Coin<DividendCoin>,
-        records: smart_vector::SmartVector<DividendRecord>,
 
-        /// Track dividend claim for each user
-        /// 0xA -> 18 means the user 0xA has claimed records[0 ... 17]
-        /// Therefore the next claim should start from records[18]
+        /// Track dividend distribution for each epoch
+        epoch_dividend: smart_vector::SmartVector<EpochDividend>,
+
+        /// Track dividend claim status for each user
+        /// 0xA -> 18 means the user 0xA has claimed records[0...17]
+        /// Therefore the next claim should be records[18]
         next_claimable: smart_table::SmartTable<address, u64>,
 
         events: DividendDistributorEvents<LockCoin, DividendCoin>
     }
 
-    struct DividendRecord has store {
-        timestamp_seconds: u64,
+    struct EpochDividend has store {
+        epoch: u64,
+        /// Accumulated dividend amount in this epoch
         dividend_amount: u64,
     }
 
@@ -41,11 +45,14 @@ module vetoken::dividend_distributor {
     }
 
     struct DistributeDividendEvent<phantom LockCoin, phantom DividendCoin> has drop, store {
+        epoch: u64,
         distributed_amount: u64,
     }
 
     struct ClaimDividendEvent<phantom LockCoin, phantom DividendCoin> has drop, store {
         account_addr: address,
+        /// The event is emitted when the user has claimed dividend up to (excluding) this epoch
+        epoch_until: u64,
         claimed_amount: u64,
     }
 
@@ -54,7 +61,7 @@ module vetoken::dividend_distributor {
 
         move_to(account, DividendDistributor<LockCoin, DividendCoin> {
             dividend: coin::zero(),
-            records: smart_vector::empty(),
+            epoch_dividend: smart_vector::empty(),
             next_claimable: smart_table::new(),
             events: DividendDistributorEvents<LockCoin, DividendCoin> {
                 distribute_dividend_events: account::new_event_handle<DistributeDividendEvent<LockCoin, DividendCoin>>(
@@ -71,14 +78,25 @@ module vetoken::dividend_distributor {
         let dividend_amount = coin::value(&dividend);
         coin::merge(&mut distributor.dividend, dividend);
 
-        smart_vector::push_back(&mut distributor.records, DividendRecord {
-            timestamp_seconds: timestamp::now_seconds(),
-            dividend_amount,
-        });
+        let epoch = seconds_to_epoch<LockCoin>(timestamp::now_seconds());
+        let length = smart_vector::length(&distributor.epoch_dividend);
+
+        // if last record is in the same epoch, merge the dividend amount
+        // otherwise, push a new record
+        if (length == 0 || smart_vector::borrow(&distributor.epoch_dividend, length - 1).epoch != epoch) {
+            smart_vector::push_back(&mut distributor.epoch_dividend, EpochDividend {
+                epoch,
+                dividend_amount
+            });
+        } else {
+            let epoch_dividend = &mut smart_vector::borrow_mut(&mut distributor.epoch_dividend, length - 1).dividend_amount;
+            *epoch_dividend = *epoch_dividend + dividend_amount;
+        };
 
         event::emit_event<DistributeDividendEvent<LockCoin, DividendCoin>>(
             &mut distributor.events.distribute_dividend_events,
             DistributeDividendEvent {
+                epoch,
                 distributed_amount: dividend_amount,
             }
         );
@@ -90,12 +108,15 @@ module vetoken::dividend_distributor {
 
         let account_addr = signer::address_of(account);
         let distributor = borrow_global_mut<DividendDistributor<LockCoin, DividendCoin>>(@vetoken);
-        smart_table::upsert(&mut distributor.next_claimable, account_addr, smart_vector::length(&distributor.records));
+        smart_table::upsert(&mut distributor.next_claimable, account_addr, smart_vector::length(&distributor.epoch_dividend
+        ));
 
         event::emit_event<ClaimDividendEvent<LockCoin, DividendCoin>>(
             &mut distributor.events.claim_dividend_events,
             ClaimDividendEvent {
                 account_addr,
+                epoch_until: smart_vector::borrow(&distributor.epoch_dividend, smart_vector::length(&distributor.epoch_dividend
+                ) - 1).epoch,
                 claimed_amount: claimable
             }
         );
@@ -114,20 +135,20 @@ module vetoken::dividend_distributor {
         let now_epoch = now_epoch<LockCoin>();
 
         let i = *smart_table::borrow_with_default(&distributor.next_claimable, account_addr, &0);
-        let n = smart_vector::length(&distributor.records);
+        let n = smart_vector::length(&distributor.epoch_dividend);
         while (i < n) {
-            let record = smart_vector::borrow(&distributor.records, i);
-            let epoch = vetoken::seconds_to_epoch<LockCoin>(record.timestamp_seconds);
-            if (epoch >= now_epoch) {
+            let record = smart_vector::borrow(&distributor.epoch_dividend, i);
+            // Only past epochs are claimable
+            if (record.epoch >= now_epoch) {
                 break
             };
-            let epoch_balance = vetoken::unnormalized_past_balance<LockCoin>(account_addr, epoch);
+            let epoch_balance = vetoken::unnormalized_past_balance<LockCoin>(account_addr, record.epoch);
             if (epoch_balance == 0) {
                 i = i + 1;
                 continue
             };
 
-            let epoch_total_supply = vetoken::unnormalized_past_total_supply<LockCoin>(epoch);
+            let epoch_total_supply = vetoken::unnormalized_past_total_supply<LockCoin>(record.epoch);
             let claimable = (((record.dividend_amount as u128) * epoch_balance / epoch_total_supply) as u64);
             total_claimable = total_claimable + claimable;
 
