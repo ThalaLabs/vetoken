@@ -5,11 +5,6 @@ version = "0.0.0"
 [addresses]
 vetoken =  "64c6153b459b2fe14650dd226c29f9fe9c0234e0a444befe84fbbbb5bca4c746"
 
-[dependencies.AptosStdlib]
-git = "https://github.com/aptos-labs/aptos-core.git"
-subdir = "aptos-move/framework/aptos-stdlib"
-rev = "mainnet"
-
 [dependencies.AptosFramework]
 git = "https://github.com/aptos-labs/aptos-core.git"
 subdir = "aptos-move/framework/aptos-framework"
