@@ -100,7 +100,7 @@ module vetoken::vetoken {
         vetoken_info.min_locked_epochs = min_locked_epochs;
     }
 
-    /// Register `account` to be able to create `VeToken`.
+    /// Register `account` to be able to hold `VeToken<CoinType>`.
     public entry fun register<CoinType>(account: &signer) {
         assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
         move_to(account, VeTokenStore<CoinType> {
