@@ -261,7 +261,7 @@ module vetoken::dividend_distributor {
         // (w1, w2, w3) = (0.5, 0.5, 0)
         // distribute 100000000
 
-        vetoken::lock(u2, coin_test::mint_coin<FakeLockCoin>(vetoken, 10000), 52);
+        vetoken::lock(u2, coin_test::mint_coin<FakeLockCoin>(vetoken, 10000), 51);
         distribute<FakeLockCoin, FakeDividendCoin>(coin_test::mint_coin<FakeDividendCoin>(vetoken, 100000000));
 
         timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeLockCoin>());
@@ -278,7 +278,7 @@ module vetoken::dividend_distributor {
         // (w1, w2, w3) = (0.25, 0.25, 0.5)
         // distribute 100000000
 
-        vetoken::lock(u3, coin_test::mint_coin<FakeLockCoin>(vetoken, 20000), 52);
+        vetoken::lock(u3, coin_test::mint_coin<FakeLockCoin>(vetoken, 20000), 50);
         distribute<FakeLockCoin, FakeDividendCoin>(coin_test::mint_coin<FakeDividendCoin>(vetoken, 100000000));
 
         timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeLockCoin>());

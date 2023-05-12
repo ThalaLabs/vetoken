@@ -8,8 +8,7 @@ module vetoken::scripts {
 
     public entry fun lock<CoinType>(account: &signer, amount: u64, epochs: u64) {
         let coin = coin::withdraw<CoinType>(account, amount);
-        let unlockable_epoch = vetoken::now_epoch<CoinType>() + epochs;
-        vetoken::lock(account, coin, unlockable_epoch);
+        vetoken::lock(account, coin, epochs);
     }
 
     public entry fun unlock<CoinType>(account: &signer) {

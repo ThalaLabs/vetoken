@@ -109,27 +109,27 @@ module vetoken::vetoken {
         });
     }
 
-    /// Lock `CoinType` up until `unlockable_epoch`. Time is referenced in terms of the epoch number in order to keep an accurate
+    /// Lock `CoinType` for `locked_epochs`. Time is referenced in terms of the epoch number in order to keep an accurate
     /// total supply of `VeToken` on an epoch basis. This implies that locked tokens are only eligible to be unlocked
     /// at the start of a new epoch.
-    public fun lock<CoinType>(account: &signer, coin: Coin<CoinType>, unlockable_epoch: u64) acquires VeTokenInfo, VeTokenStore {
+    public fun lock<CoinType>(account: &signer, coin: Coin<CoinType>, locked_epochs: u64) acquires VeTokenInfo, VeTokenStore {
         let account_addr = signer::address_of(account);
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
         let amount = (coin::value(&coin) as u128);
         assert!(amount > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
+        assert!(locked_epochs > 0, ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH);
 
         let now_epoch = now_epoch<CoinType>();
-        assert!(unlockable_epoch > now_epoch, ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH);
-
         let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
-        assert!(now_epoch + vetoken_info.min_locked_epochs <= unlockable_epoch
-            && now_epoch + vetoken_info.max_locked_epochs >= unlockable_epoch, ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH);
+        assert!(vetoken_info.min_locked_epochs <= locked_epochs
+            && vetoken_info.max_locked_epochs >= locked_epochs, ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH);
 
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
         assert!(coin::value(&vetoken_store.vetoken.locked) == 0, ERR_VETOKEN_LOCKED);
 
         // Update the supply for the epochs this VeToken is locked
+        let unlockable_epoch = now_epoch + locked_epochs;
         let epoch = now_epoch;
         while (epoch < unlockable_epoch) {
             let epochs_till_unlock = (unlockable_epoch - epoch as u128);
@@ -604,8 +604,8 @@ module vetoken::vetoken {
 
         // new epoch == 1
         timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
-        lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
-        lock(u2, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 3);
+        lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 1);
+        lock(u2, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 250, 1); // 1000/4
         assert!(balance<FakeCoin>(signer::address_of(u2)) == 500, 1); // 2000/4
         assert!(total_supply<FakeCoin>() == 750, 0);
