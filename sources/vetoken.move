@@ -22,7 +22,7 @@ module vetoken::vetoken {
     const ERR_VETOKEN_ZERO_LOCK_AMOUNT: u64 = 4;
     const ERR_VETOKEN_INVALID_LOCK_DURATION: u64 = 5;
     const ERR_VETOKEN_INVALID_EPOCH_DURATION: u64 = 6;
-    const ERR_VETOKEN_INVALID_END_EPOCH: u64 = 7;
+    const ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH: u64 = 7;
     const ERR_VETOKEN_INVALID_PAST_EPOCH: u64 = 8;
 
     // Other
@@ -109,10 +109,10 @@ module vetoken::vetoken {
         });
     }
 
-    /// Lock `CoinType` up until `end_epoch`. Time is referenced in terms of the epoch number in order to keep an accurate
+    /// Lock `CoinType` up until `unlockable_epoch`. Time is referenced in terms of the epoch number in order to keep an accurate
     /// total supply of `VeToken` on an epoch basis. This implies that locked tokens are only eligible to be unlocked
     /// at the start of a new epoch.
-    public fun lock<CoinType>(account: &signer, coin: Coin<CoinType>, end_epoch: u64) acquires VeTokenInfo, VeTokenStore {
+    public fun lock<CoinType>(account: &signer, coin: Coin<CoinType>, unlockable_epoch: u64) acquires VeTokenInfo, VeTokenStore {
         let account_addr = signer::address_of(account);
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
@@ -120,19 +120,19 @@ module vetoken::vetoken {
         assert!(amount > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
 
         let now_epoch = now_epoch<CoinType>();
-        assert!(end_epoch > now_epoch, ERR_VETOKEN_INVALID_END_EPOCH);
+        assert!(unlockable_epoch > now_epoch, ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH);
 
         let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
-        assert!(now_epoch + vetoken_info.min_locked_epochs <= end_epoch
-            && now_epoch + vetoken_info.max_locked_epochs >= end_epoch, ERR_VETOKEN_INVALID_END_EPOCH);
+        assert!(now_epoch + vetoken_info.min_locked_epochs <= unlockable_epoch
+            && now_epoch + vetoken_info.max_locked_epochs >= unlockable_epoch, ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH);
 
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
         assert!(coin::value(&vetoken_store.vetoken.locked) == 0, ERR_VETOKEN_LOCKED);
 
         // Update the supply for the epochs this VeToken is locked
         let epoch = now_epoch;
-        while (epoch < end_epoch) {
-            let epochs_till_unlock = (end_epoch - epoch as u128);
+        while (epoch < unlockable_epoch) {
+            let epochs_till_unlock = (unlockable_epoch - epoch as u128);
             let total_supply = table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
             *total_supply = *total_supply + (amount * epochs_till_unlock);
 
@@ -140,7 +140,7 @@ module vetoken::vetoken {
         };
 
         // Update the VeToken & snapshot
-        vetoken_store.vetoken.unlockable_epoch = end_epoch;
+        vetoken_store.vetoken.unlockable_epoch = unlockable_epoch;
         coin::merge(&mut vetoken_store.vetoken.locked, coin);
         snapshot_vetoken(vetoken_store, now_epoch);
     }
@@ -156,18 +156,18 @@ module vetoken::vetoken {
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
         assert!(now_epoch < vetoken_store.vetoken.unlockable_epoch, ERR_VETOKEN_NOT_LOCKED);
 
-        let new_end_epoch = vetoken_store.vetoken.unlockable_epoch + increment_epochs;
+        let new_unlockable_epoch = vetoken_store.vetoken.unlockable_epoch + increment_epochs;
         let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
-        assert!(new_end_epoch - now_epoch <= vetoken_info.max_locked_epochs, ERR_VETOKEN_INVALID_LOCK_DURATION);
+        assert!(new_unlockable_epoch - now_epoch <= vetoken_info.max_locked_epochs, ERR_VETOKEN_INVALID_LOCK_DURATION);
 
         let locked_amount = (coin::value(&vetoken_store.vetoken.locked) as u128);
 
         // Update the supply for the epochs this VeToken is locked
         let epoch = now_epoch;
-        while (epoch < new_end_epoch) {
+        while (epoch < new_unlockable_epoch) {
             // For epochs the token was already locked prior, an extra `increment_epochs` factor of `locked_amount`
             // is added. For the new epochs, the supply is updated as normal (epochs left till unlock)
-            let strength_factor = if (epoch < vetoken_store.vetoken.unlockable_epoch) increment_epochs else new_end_epoch - epoch;
+            let strength_factor = if (epoch < vetoken_store.vetoken.unlockable_epoch) increment_epochs else new_unlockable_epoch - epoch;
             let total_supply = table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
             *total_supply = *total_supply + (locked_amount * (strength_factor as u128));
 
@@ -175,7 +175,7 @@ module vetoken::vetoken {
         };
 
         // Update the VeToken & snapshot
-        vetoken_store.vetoken.unlockable_epoch = new_end_epoch;
+        vetoken_store.vetoken.unlockable_epoch = new_unlockable_epoch;
         snapshot_vetoken(vetoken_store, now_epoch);
     }
 
@@ -209,7 +209,7 @@ module vetoken::vetoken {
         snapshot_vetoken(vetoken_store, now_epoch);
     }
 
-    /// Unlock a `VeToken` that reached `end_epoch`.
+    /// Unlock a `VeToken` that reached `unlockable_epoch`.
     public fun unlock<CoinType>(account: &signer): Coin<CoinType> acquires VeTokenInfo, VeTokenStore {
         let account_addr = signer::address_of(account);
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
@@ -415,7 +415,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, accountA = @0xA, accountB = @0xB)]
-    #[expected_failure(abort_code = ERR_VETOKEN_INVALID_END_EPOCH)]
+    #[expected_failure(abort_code = ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH)]
     fun set_min_locked_epochs_ok(aptos_framework: &signer, vetoken: &signer, accountA: &signer, accountB: &signer) acquires VeTokenInfo, VeTokenStore {
         initialize_for_test(aptos_framework, vetoken, 1, 52);
         register<FakeCoin>(accountA);
@@ -459,8 +459,8 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, account = @0xA)]
-    #[expected_failure(abort_code = ERR_VETOKEN_INVALID_END_EPOCH)]
-    fun lock_beyond_max_invalid_end_epoch_err(aptos_framework: &signer, vetoken: &signer, account: &signer) acquires VeTokenInfo, VeTokenStore {
+    #[expected_failure(abort_code = ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH)]
+    fun lock_beyond_max_invalid_unlockable_epoch_err(aptos_framework: &signer, vetoken: &signer, account: &signer) acquires VeTokenInfo, VeTokenStore {
         initialize_for_test(aptos_framework, vetoken, 1, 52);
         register<FakeCoin>(account);
 
@@ -480,8 +480,8 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken, account = @0xA)]
-    #[expected_failure(abort_code = ERR_VETOKEN_INVALID_END_EPOCH)]
-    fun lock_below_min_invalid_end_epoch_err(aptos_framework: &signer, vetoken: &signer, account: &signer) acquires VeTokenInfo, VeTokenStore {
+    #[expected_failure(abort_code = ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH)]
+    fun lock_below_min_invalid_unlockable_epoch_err(aptos_framework: &signer, vetoken: &signer, account: &signer) acquires VeTokenInfo, VeTokenStore {
         initialize_for_test(aptos_framework, vetoken, 2, 52);
         register<FakeCoin>(account);
 
