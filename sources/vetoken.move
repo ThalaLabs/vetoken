@@ -1,8 +1,6 @@
 module vetoken::vetoken {
     use std::signer;
-    use std::vector;
 
-    use aptos_std::math64;
     use aptos_std::table::{Self, Table};
     use aptos_std::type_info;
     use aptos_framework::coin::{Self, Coin};
@@ -35,29 +33,24 @@ module vetoken::vetoken {
         unlockable_epoch: u64,
     }
 
-    struct VeTokenSnapshot has store, drop {
-        locked: u64,
-        unlockable_epoch: u64,
-
-        // The epoch in which this snapshot was taken
-        epoch: u64,
-    }
-
     struct VeTokenStore<phantom CoinType> has key {
         vetoken: VeToken<CoinType>,
-        snapshots: vector<VeTokenSnapshot>
+
+        /// Represents the balance a user has in a given epoch `i`. The value
+        /// is represented in an unnormalized format.
+        unnormalized_balance: Table<u64, u128>,
     }
 
     struct VeTokenInfo<phantom CoinType> has key {
-        // ***NOTE*** These values cannot be configurable! The token snapshotting logic
+        // ***NOTE*** These values cannot be configurable! Computing balances/supply
         // assumes that the parameters of a VeToken is fixed post-initialization.
 
         min_locked_epochs: u64,
         max_locked_epochs: u64,
         epoch_duration_seconds: u64,
 
-        // Stores the total supply for a given epoch i, updated as vetokens are locked. The value
-        // store is "unnormalized" meaning the (1/max_locked_epochs) factor is left out.
+        /// Stores the total supply for a given epoch i, updated as vetokens are locked. The value
+        /// store is "unnormalized" meaning the (1/max_locked_epochs) factor is left out.
         unnormalized_total_supply: Table<u64, u128>,
     }
 
@@ -86,8 +79,7 @@ module vetoken::vetoken {
         });
     }
 
-    /// Update the minimum epochs a token must be locked for. We can do this unlike `max_locked_epochs` as the
-    /// snapshotting logic works independently of the minimum
+    /// Update the minimum epochs a token must be locked for.
     public entry fun set_min_locked_epochs<CoinType>(account: &signer, min_locked_epochs: u64) acquires VeTokenInfo {
         assert!(initialized<CoinType>(), ERR_VETOKEN_INITIALIZED);
 
@@ -105,7 +97,7 @@ module vetoken::vetoken {
         assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
         move_to(account, VeTokenStore<CoinType> {
             vetoken: VeToken<CoinType> { locked: coin::zero(), unlockable_epoch: 0 },
-            snapshots: vector::empty(),
+            unnormalized_balance: table::new(),
         });
     }
 
@@ -113,6 +105,8 @@ module vetoken::vetoken {
     /// total supply of `VeToken` on an epoch basis. This implies that locked tokens are only eligible to be unlocked
     /// at the start of a new epoch.
     public fun lock<CoinType>(account: &signer, coin: Coin<CoinType>, locked_epochs: u64) acquires VeTokenInfo, VeTokenStore {
+        assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
+
         let account_addr = signer::address_of(account);
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
@@ -128,26 +122,32 @@ module vetoken::vetoken {
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
         assert!(coin::value(&vetoken_store.vetoken.locked) == 0, ERR_VETOKEN_LOCKED);
 
-        // Update the supply for the epochs this VeToken is locked
         let unlockable_epoch = now_epoch + locked_epochs;
+
+        // Update the supply for the epochs this VeToken is locked
         let epoch = now_epoch;
         while (epoch < unlockable_epoch) {
             let epochs_till_unlock = (unlockable_epoch - epoch as u128);
+            let unnormalized_balance = amount * epochs_till_unlock;
+
             let total_supply = table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
-            *total_supply = *total_supply + (amount * epochs_till_unlock);
+            *total_supply = *total_supply + unnormalized_balance;
+
+            // this will never abort since on `lock`, there is no other entry point for these keys to be populated
+            table::add(&mut vetoken_store.unnormalized_balance, epoch, unnormalized_balance);
 
             epoch = epoch + 1;
         };
 
-        // Update the VeToken & snapshot
+        // Update the VeToken
         vetoken_store.vetoken.unlockable_epoch = unlockable_epoch;
         coin::merge(&mut vetoken_store.vetoken.locked, coin);
-        snapshot_vetoken(vetoken_store, now_epoch);
     }
 
     /// Extend the period in which the `VeToken` remains locked
     public entry fun increase_lock_duration<CoinType>(account: &signer, increment_epochs: u64) acquires VeTokenInfo, VeTokenStore {
         assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
+
         let account_addr = signer::address_of(account);
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
         assert!(increment_epochs >= 1, ERR_VETOKEN_INVALID_LOCK_DURATION);
@@ -168,20 +168,26 @@ module vetoken::vetoken {
             // For epochs the token was already locked prior, an extra `increment_epochs` factor of `locked_amount`
             // is added. For the new epochs, the supply is updated as normal (epochs left till unlock)
             let strength_factor = if (epoch < vetoken_store.vetoken.unlockable_epoch) increment_epochs else new_unlockable_epoch - epoch;
+            let unnormalized_balance = locked_amount * (strength_factor as u128);
+
             let total_supply = table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
-            *total_supply = *total_supply + (locked_amount * (strength_factor as u128));
+            *total_supply = *total_supply + unnormalized_balance;
+
+            // this will work in both scenarios where balance is added (epoch < old_unlockable_epoch) and new epochs given the default
+            let balance = table::borrow_mut_with_default(&mut vetoken_store.unnormalized_balance, epoch, 0);
+            *balance = *balance + unnormalized_balance;
 
             epoch = epoch + 1;
         };
 
-        // Update the VeToken & snapshot
+        // Update the VeToken
         vetoken_store.vetoken.unlockable_epoch = new_unlockable_epoch;
-        snapshot_vetoken(vetoken_store, now_epoch);
     }
 
     /// Extend how much `CoinType` is locked within `VeToken`.
     public fun increase_lock_amount<CoinType>(account: &signer, coin: Coin<CoinType>) acquires VeTokenInfo, VeTokenStore {
         assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
+
         let account_addr = signer::address_of(account);
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
@@ -192,21 +198,24 @@ module vetoken::vetoken {
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
         assert!(now_epoch < vetoken_store.vetoken.unlockable_epoch, ERR_VETOKEN_NOT_LOCKED);
 
-        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
-
         // Update the supply for the applicable epochs.
         let epoch = now_epoch;
+        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
         while (epoch < vetoken_store.vetoken.unlockable_epoch) {
             let epochs_till_unlock = (vetoken_store.vetoken.unlockable_epoch- epoch as u128);
+            let unnormalized_balance = amount * epochs_till_unlock;
+
             let total_supply = table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
             *total_supply = *total_supply + (amount * epochs_till_unlock);
+
+            let balance = table::borrow_mut_with_default(&mut vetoken_store.unnormalized_balance, epoch, 0);
+            *balance = *balance + unnormalized_balance;
 
             epoch = epoch + 1;
         };
 
-        // Update the VeToken & snapshot
+        // Update the VeToken
         coin::merge(&mut vetoken_store.vetoken.locked, coin);
-        snapshot_vetoken(vetoken_store, now_epoch);
     }
 
     /// Unlock a `VeToken` that reached `unlockable_epoch`.
@@ -224,85 +233,14 @@ module vetoken::vetoken {
         vetoken_store.vetoken.unlockable_epoch = 0;
         coin::extract_all(&mut vetoken_store.vetoken.locked)
 
-        // Note: We dont have to take a snapshot here as the balance in this epoch and
-        // beyond will be zero since the entire lock duration will have elapsed. This
-        // operation has no effect on the total supply
-    }
-
-    fun snapshot_vetoken<CoinType>(vetoken_store: &mut VeTokenStore<CoinType>, epoch: u64) {
-        let num_snapshots = vector::length(&vetoken_store.snapshots);
-        if (num_snapshots > 0) {
-            let last_snapshot = vector::borrow_mut(&mut vetoken_store.snapshots, num_snapshots - 1);
-            assert!(epoch >= last_snapshot.epoch, ERR_VETOKEN_INTERNAL_ERROR);
-
-            // Simply alter the last snapshot since we are still in the epoch
-            if (last_snapshot.epoch == epoch) {
-                last_snapshot.locked = coin::value(&vetoken_store.vetoken.locked);
-                last_snapshot.unlockable_epoch = vetoken_store.vetoken.unlockable_epoch;
-                return
-            }
-        };
-
-        // Append a new snapshot for this epoch
-        vector::push_back(&mut vetoken_store.snapshots, VeTokenSnapshot {
-            epoch,
-            locked: coin::value(&vetoken_store.vetoken.locked),
-            unlockable_epoch: vetoken_store.vetoken.unlockable_epoch,
-        });
-    }
-
-    fun find_snapshot(snapshots: &vector<VeTokenSnapshot>, epoch: u64): &VeTokenSnapshot {
-        // (1) Caller should ensure `epoch` is within bounds
-        let num_snapshots = vector::length(snapshots);
-        assert!(num_snapshots > 0, ERR_VETOKEN_INTERNAL_ERROR);
-
-        let first_snapshot = vector::borrow(snapshots, 0);
-        assert!(epoch >= first_snapshot.epoch, ERR_VETOKEN_INTERNAL_ERROR);
-
-        // (2) Check if first or last snapshot sufficies this query
-        if (epoch == first_snapshot.epoch) return first_snapshot;
-        let last_snapshot = vector::borrow(snapshots, num_snapshots - 1);
-        if (epoch >= last_snapshot.epoch) return last_snapshot;
-
-        // (3) Binary search the checkpoints
-        // We expect queries to most often query a time not too far ago (i.e a recent governance proposal).
-        // For this reason, we try to narrow our search range to the more recent checkpoints
-        let low = 0;
-        let high = num_snapshots;
-        if (num_snapshots > 5) {
-            let mid = num_snapshots - math64::sqrt(num_snapshots);
-
-            // If we found the exact snapshot, we can return early
-            let snapshot = vector::borrow(snapshots, mid);
-            if (epoch == snapshot.epoch) return snapshot;
-
-            if (epoch < snapshot.epoch) high = mid
-            else low = mid + 1
-        };
-
-        // Move the low/high markers to a point where `high` is lowest checkpoint that was at a point `epoch`.
-        while (low < high) {
-            let mid = low + (high - low) / 2;
-
-            // If we found the exact snapshot, we can return early
-            let snapshot = vector::borrow(snapshots, mid);
-            if (epoch == snapshot.epoch) return snapshot;
-
-            if (epoch < snapshot.epoch) high = mid
-            else low = mid + 1;
-        };
-
-        // If high == 0, then we know `epoch` is a marker too far in the past for this account which should
-        // never happen given the bound checks in (1). The right snapshot is the one previous to `high`.
-        assert!(high > 0, ERR_VETOKEN_INTERNAL_ERROR);
-        vector::borrow(snapshots, high - 1)
+        // Note: We dont have to update balance or supply from this epoch onwards since
+        // the entire lock duration will have elapsed. No effect on balance/supply
     }
 
     fun account_address<Type>(): address {
         let type_info = type_info::type_of<Type>();
         type_info::account_address(&type_info)
     }
-
 
     // Public Getters
 
@@ -345,20 +283,8 @@ module vetoken::vetoken {
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
         assert!(epoch <= now_epoch<CoinType>(), ERR_VETOKEN_INVALID_PAST_EPOCH);
 
-        // ensure `epoch` is within bounds. no need to check the upper bound as the latest snapshot is valid for
-        // any future epoch up until `now_epoch<CoinType>()`
         let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);
-        let snapshots = &vetoken_store.snapshots;
-        if (vector::is_empty(snapshots) || epoch < vector::borrow(snapshots, 0).epoch) {
-            return 0
-        };
-
-        // find the appropriate snapshot and compute the balance
-        let snapshot = find_snapshot(snapshots, epoch);
-        if (epoch >= snapshot.unlockable_epoch) 0
-        else {
-            (snapshot.locked as u128) * ((snapshot.unlockable_epoch - epoch) as u128)
-        }
+        *table::borrow_with_default(&vetoken_store.unnormalized_balance, epoch, &0)
     }
 
     #[view]
