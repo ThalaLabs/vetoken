@@ -98,7 +98,7 @@ module vetoken::vetoken {
 
     /// Update the minimum epochs a token must be locked for.
     public entry fun set_min_locked_epochs<CoinType>(account: &signer, min_locked_epochs: u64) acquires VeTokenInfo {
-        assert!(initialized<CoinType>(), ERR_VETOKEN_INITIALIZED);
+        assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
 
         let account_addr = signer::address_of(account);
         assert!(account_address<CoinType>() == account_addr, ERR_VETOKEN_COIN_ADDRESS_MISMATCH);
