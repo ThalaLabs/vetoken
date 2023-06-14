@@ -1,7 +1,7 @@
 module vetoken::vetoken {
     use std::signer;
 
-    use aptos_std::table::{Self, Table};
+    use aptos_std::smart_table::{Self, SmartTable};
     use aptos_std::type_info;
     use aptos_framework::coin::{Self, Coin};
     use aptos_framework::timestamp;
@@ -42,7 +42,7 @@ module vetoken::vetoken {
 
         /// Represents the balance a user has in a given epoch `i`. The value
         /// is represented in an unnormalized format.
-        unnormalized_balance: Table<u64, u128>,
+        unnormalized_balance: SmartTable<u64, u128>,
 
         /// The delegate to which the current `vetoken` balance should be attributed to.
         /// Delegated vetokens are not transitive, meaning `delegate_to` cannot re-delegate
@@ -55,7 +55,7 @@ module vetoken::vetoken {
     struct VeTokenDelegations<phantom CoinType> has key {
         /// Running total of the balanced delegated to this account per `epoch` key. This
         /// value is unnormalized similar to `unnormalized_total_supply`.
-        unnormalized_delegation_balance: Table<u64, u128>
+        unnormalized_delegation_balance: SmartTable<u64, u128>
     }
 
     struct VeTokenInfo<phantom CoinType> has key {
@@ -68,7 +68,7 @@ module vetoken::vetoken {
 
         /// Stores the total supply for a given epoch i, updated as vetokens are locked. The value
         /// store is "unnormalized" meaning the (1/max_locked_epochs) factor is left out.
-        unnormalized_total_supply: Table<u64, u128>,
+        unnormalized_total_supply: SmartTable<u64, u128>,
     }
 
     /// Initialize a `VeToken` based on `CoinType`. The parameters set on the VeToken are not changeable after init.
@@ -92,7 +92,7 @@ module vetoken::vetoken {
             min_locked_epochs,
             max_locked_epochs,
             epoch_duration_seconds,
-            unnormalized_total_supply: table::new(),
+            unnormalized_total_supply: smart_table::new(),
         });
     }
 
@@ -113,10 +113,10 @@ module vetoken::vetoken {
     public entry fun register<CoinType>(account: &signer) {
         assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
 
-        move_to(account, VeTokenDelegations<CoinType> { unnormalized_delegation_balance: table::new() });
+        move_to(account, VeTokenDelegations<CoinType> { unnormalized_delegation_balance: smart_table::new() });
         move_to(account, VeTokenStore<CoinType> {
             vetoken: VeToken<CoinType> { locked: coin::zero(), unlockable_epoch: 0 },
-            unnormalized_balance: table::new(),
+            unnormalized_balance: smart_table::new(),
             delegate_to: signer::address_of(account),
         });
     }
@@ -150,13 +150,13 @@ module vetoken::vetoken {
             let epochs_till_unlock = (unlockable_epoch - epoch as u128);
             let unnormalized_balance = amount * epochs_till_unlock;
 
-            let total_supply = table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
+            let total_supply = smart_table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
             *total_supply = *total_supply + unnormalized_balance;
 
             // this will never abort since on `lock`, there is no other entry point for these keys to be populated
-            table::add(&mut vetoken_store.unnormalized_balance, epoch, unnormalized_balance);
+            smart_table::add(&mut vetoken_store.unnormalized_balance, epoch, unnormalized_balance);
 
-            let delegate_balance = table::borrow_mut_with_default(&mut delegate_store.unnormalized_delegation_balance, epoch, 0);
+            let delegate_balance = smart_table::borrow_mut_with_default(&mut delegate_store.unnormalized_delegation_balance, epoch, 0);
             *delegate_balance = *delegate_balance + unnormalized_balance;
 
             epoch = epoch + 1;
@@ -195,14 +195,14 @@ module vetoken::vetoken {
             let strength_factor = if (epoch < vetoken_store.vetoken.unlockable_epoch) increment_epochs else new_unlockable_epoch - epoch;
             let unnormalized_added_balance = locked_amount * (strength_factor as u128);
 
-            let total_supply = table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
+            let total_supply = smart_table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
             *total_supply = *total_supply + unnormalized_added_balance;
 
             // this will work in both scenarios where balance is added (epoch < old_unlockable_epoch) and new epochs given the 0 default
-            let balance = table::borrow_mut_with_default(&mut vetoken_store.unnormalized_balance, epoch, 0);
+            let balance = smart_table::borrow_mut_with_default(&mut vetoken_store.unnormalized_balance, epoch, 0);
             *balance = *balance + unnormalized_added_balance;
 
-            let delegate_balance = table::borrow_mut_with_default(&mut delegate_store.unnormalized_delegation_balance, epoch, 0);
+            let delegate_balance = smart_table::borrow_mut_with_default(&mut delegate_store.unnormalized_delegation_balance, epoch, 0);
             *delegate_balance = *delegate_balance + unnormalized_added_balance;
 
             epoch = epoch + 1;
@@ -235,13 +235,13 @@ module vetoken::vetoken {
             let epochs_till_unlock = (vetoken_store.vetoken.unlockable_epoch - epoch as u128);
             let unnormalized_added_balance = amount * epochs_till_unlock;
 
-            let total_supply = table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
+            let total_supply = smart_table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
             *total_supply = *total_supply + unnormalized_added_balance;
 
-            let balance = table::borrow_mut_with_default(&mut vetoken_store.unnormalized_balance, epoch, 0);
+            let balance = smart_table::borrow_mut_with_default(&mut vetoken_store.unnormalized_balance, epoch, 0);
             *balance = *balance + unnormalized_added_balance;
 
-            let delegate_balance = table::borrow_mut_with_default(&mut delegate_store.unnormalized_delegation_balance, epoch, 0);
+            let delegate_balance = smart_table::borrow_mut_with_default(&mut delegate_store.unnormalized_delegation_balance, epoch, 0);
             *delegate_balance = *delegate_balance + unnormalized_added_balance;
 
             epoch = epoch + 1;
@@ -294,12 +294,12 @@ module vetoken::vetoken {
 
             // remove from previous delegate
             let delegate_store = borrow_global_mut<VeTokenDelegations<CoinType>>(vetoken_store.delegate_to);
-            let old_delegate_balance = table::borrow_mut_with_default(&mut delegate_store.unnormalized_delegation_balance, epoch, 0);
+            let old_delegate_balance = smart_table::borrow_mut_with_default(&mut delegate_store.unnormalized_delegation_balance, epoch, 0);
             *old_delegate_balance = *old_delegate_balance - unnormalized_balance;
 
             // add to new delegate
             let delegate_store = borrow_global_mut<VeTokenDelegations<CoinType>>(delegate);
-            let new_delegate_balance = table::borrow_mut_with_default(&mut delegate_store.unnormalized_delegation_balance, epoch, 0);
+            let new_delegate_balance = smart_table::borrow_mut_with_default(&mut delegate_store.unnormalized_delegation_balance, epoch, 0);
             *new_delegate_balance = *new_delegate_balance + unnormalized_balance;
 
             epoch = epoch + 1;
@@ -353,7 +353,7 @@ module vetoken::vetoken {
         assert!(epoch <= now_epoch<CoinType>(), ERR_VETOKEN_INVALID_PAST_EPOCH);
 
         let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
-        *table::borrow_with_default(&vetoken_info.unnormalized_total_supply, epoch, &0)
+        *smart_table::borrow_with_default(&vetoken_info.unnormalized_total_supply, epoch, &0)
     }
 
     #[view]
@@ -367,7 +367,7 @@ module vetoken::vetoken {
         assert!(epoch <= now_epoch<CoinType>(), ERR_VETOKEN_INVALID_PAST_EPOCH);
 
         let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);
-        *table::borrow_with_default(&vetoken_store.unnormalized_balance, epoch, &0)
+        *smart_table::borrow_with_default(&vetoken_store.unnormalized_balance, epoch, &0)
     }
 
     #[view]
@@ -383,7 +383,7 @@ module vetoken::vetoken {
         assert!(epoch <= now_epoch<CoinType>(), ERR_VETOKEN_INVALID_PAST_EPOCH);
 
         let delegate_store = borrow_global<VeTokenDelegations<CoinType>>(account_addr);
-        *table::borrow_with_default(&delegate_store.unnormalized_delegation_balance, epoch, &0)
+        *smart_table::borrow_with_default(&delegate_store.unnormalized_delegation_balance, epoch, &0)
     }
 
     #[view]
@@ -482,7 +482,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun lock_max_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations { 
+    fun lock_max_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
         initialize_for_test(aptos_framework, vetoken, 1, 52);
 
         let u1 = &account::create_account_for_test(@0xA);
