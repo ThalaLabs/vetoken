@@ -1,0 +1,31 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  tests:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Get Aptos
+        uses: pontem-network/get-aptos@main
+        with:
+          version: aptos-cli-v2.0.1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compile
+        run: aptos move compile
+
+      - name: Test
+        run: aptos move test
