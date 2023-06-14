@@ -15,7 +15,7 @@ module vetoken::dividend_distributor {
     use vetoken::vetoken::{Self, now_epoch, seconds_to_epoch};
 
     #[test_only]
-    use test_utils::coin_test;
+    use vetoken::coin_test;
 
     const ERR_DIVIDEND_DISTRIBUTOR_UNAUTHORIZED: u64 = 0;
     const ERR_DIVIDEND_DISTRIBUTOR_UNINITIALIZED: u64 = 1;

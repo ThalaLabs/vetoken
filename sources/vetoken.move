@@ -418,7 +418,7 @@ module vetoken::vetoken {
     }
 
     #[test_only]
-    use test_utils::coin_test;
+    use vetoken::coin_test;
 
     #[test_only]
     use aptos_framework::account;
