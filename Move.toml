@@ -3,7 +3,7 @@ name = "VeToken"
 version = "0.0.0"
 
 [addresses]
-vetoken =  "64c6153b459b2fe14650dd226c29f9fe9c0234e0a444befe84fbbbb5bca4c746"
+vetoken =  "5eac263e3e06cb194fae18544ef3d5c5056c4cbd43473c70823cb199f2059f37"
 
 [dependencies.AptosFramework]
 git = "https://github.com/aptos-labs/aptos-core.git"
