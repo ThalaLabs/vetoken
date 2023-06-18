@@ -126,7 +126,10 @@ module vetoken::vetoken {
     /// at the start of a new epoch.
     public fun lock<CoinType>(account: &signer, coin: Coin<CoinType>, locked_epochs: u64) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
         let account_addr = signer::address_of(account);
-        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
+
+        if (!is_account_registered<CoinType>(account_addr)) {
+            register<CoinType>(account);
+        };
 
         let amount = (coin::value(&coin) as u128);
         assert!(amount > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
