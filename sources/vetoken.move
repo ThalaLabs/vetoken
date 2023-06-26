@@ -32,6 +32,10 @@ module vetoken::vetoken {
     const ERR_VETOKEN_COIN_ADDRESS_MISMATCH: u64 = 101;
     const ERR_VETOKEN_INTERNAL_ERROR: u64 = 102;
 
+    ///
+    /// Resources
+    ///
+
     struct VeToken<phantom CoinType> has store {
         locked: Coin<CoinType>,
         unlockable_epoch: u64,
@@ -126,7 +130,6 @@ module vetoken::vetoken {
     /// at the start of a new epoch.
     public fun lock<CoinType>(account: &signer, coin: Coin<CoinType>, locked_epochs: u64) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
         let account_addr = signer::address_of(account);
-
         if (!is_account_registered<CoinType>(account_addr)) {
             register<CoinType>(account);
         };
@@ -334,6 +337,26 @@ module vetoken::vetoken {
         past_total_supply<CoinType>(now_epoch<CoinType>())
     }
 
+    #[view] /// Returns if this user currently has a locked VeToken
+    public fun locked<CoinType>(account_addr: address): bool acquires VeTokenInfo, VeTokenStore {
+        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
+
+        let now_epoch = now_epoch<CoinType>();
+        let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);
+        vetoken_store.vetoken.unlockable_epoch > now_epoch
+    }
+
+    #[view] /// Returns the epoch in which this VeToken is unlockable
+    public fun unlockable_epoch<CoinType>(account_addr: address): u64 acquires VeTokenInfo, VeTokenStore {
+        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
+
+        let now_epoch = now_epoch<CoinType>();
+        let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);
+        assert!(vetoken_store.vetoken.unlockable_epoch > now_epoch, ERR_VETOKEN_NOT_LOCKED);
+
+        vetoken_store.vetoken.unlockable_epoch
+    }
+
     #[view] /// Returns the current balance derived by the funds locked by this account
     public fun balance<CoinType>(account_addr: address): u64 acquires VeTokenInfo, VeTokenStore {
         past_balance<CoinType>(account_addr, now_epoch<CoinType>())
@@ -415,6 +438,12 @@ module vetoken::vetoken {
     }
 
     #[view]
+    public fun min_locked_epochs<CoinType>(): u64 acquires VeTokenInfo {
+        let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
+        vetoken_info.min_locked_epochs
+    }
+
+    #[view]
     public fun max_locked_epochs<CoinType>(): u64 acquires VeTokenInfo {
         let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
         vetoken_info.max_locked_epochs
@@ -439,9 +468,10 @@ module vetoken::vetoken {
         coin_test::initialize_fake_coin_with_decimals<FakeCoin>(vetoken, 8);
     }
 
-    #[test(account = @0xA)]
+    #[test]
     #[expected_failure(abort_code = ERR_VETOKEN_COIN_ADDRESS_MISMATCH)]
-    fun non_vetoken_initialize_err(account: &signer) {
+    fun vetoken_initialize_address_mismatch_err() {
+        let account = &account::create_account_for_test(@0xA);
         initialize<FakeCoin>(account, 1, 52, SECONDS_IN_WEEK);
     }
 
@@ -471,12 +501,17 @@ module vetoken::vetoken {
         let u1 = &account::create_account_for_test(@0xA);
         register<FakeCoin>(u1);
 
+        assert!(!locked<FakeCoin>(signer::address_of(u1)), 0);
+
         // lock
         let lock_coin = coin_test::mint_coin<FakeCoin>(vetoken, 1000);
         lock(u1, lock_coin, 1);
+        assert!(locked<FakeCoin>(signer::address_of(u1)), 0);
 
-        // unlock
+        // unlock (view function flips even if `unlock` isn't explicitly called)
         timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
+        assert!(!locked<FakeCoin>(signer::address_of(u1)), 0);
+
         let unlocked = unlock<FakeCoin>(u1);
         assert!(coin::value(&unlocked) == 1000, 0);
 
