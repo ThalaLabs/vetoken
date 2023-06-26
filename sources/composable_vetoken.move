@@ -4,6 +4,7 @@ module vetoken::composable_vetoken {
     use aptos_framework::coin::{Self, Coin};
     use aptos_std::type_info;
     use aptos_std::math64;
+    use aptos_std::math128;
 
     use vetoken::vetoken;
 
@@ -46,8 +47,7 @@ module vetoken::composable_vetoken {
 
         // assert composable vetoken configuration
         assert!(vetoken::seconds_in_epoch<CoinTypeA>() == vetoken::seconds_in_epoch<CoinTypeB>(), ERR_COMPOSABLE_VETOKEN_EPOCH_DURATION_MISMATCH);
-        assert!(weight_percent_coin_a > 0 && weight_percent_coin_a <= 100, ERR_COMPOSABLE_VETOKEN_INVALID_WEIGHTS); 
-        assert!(weight_percent_coin_b > 0 && weight_percent_coin_b <= 100, ERR_COMPOSABLE_VETOKEN_INVALID_WEIGHTS);
+        assert!(weight_percent_coin_a > 0 && weight_percent_coin_b > 0, ERR_COMPOSABLE_VETOKEN_INVALID_WEIGHTS); 
 
         // the owner of the first coin slot controls configuration for this `ComposableVeToken`.
         assert!(account_address<CoinTypeA>() == signer::address_of(account), ERR_COMPOSABLE_VETOKEN_COIN_ADDRESS_MISMATCH);
@@ -139,7 +139,7 @@ module vetoken::composable_vetoken {
             if (end_epoch_a > end_epoch) {
                 let old_strength_factor = (end_epoch_a - epoch as u128);
                 let new_strength_factor = (end_epoch - epoch as u128);
-                epoch_balance_a = new_strength_factor * (epoch_balance_a / old_strength_factor);
+                epoch_balance_a = math128::mul_div(new_strength_factor, epoch_balance_a, old_strength_factor);
             };
 
 
@@ -147,7 +147,7 @@ module vetoken::composable_vetoken {
             if (end_epoch_b > end_epoch) {
                 let old_strength_factor = (end_epoch_b - epoch as u128);
                 let new_strength_factor = (end_epoch - epoch as u128);
-                epoch_balance_b = new_strength_factor * (epoch_balance_b / old_strength_factor);
+                epoch_balance_b = math128::mul_div(new_strength_factor, epoch_balance_b, old_strength_factor);
             };
 
             unnormalized_balance_a = unnormalized_balance_a + epoch_balance_a;
@@ -240,7 +240,7 @@ module vetoken::composable_vetoken {
     #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN_INVALID_WEIGHTS)]
     fun composable_vetoken_initialize_cointype_b_invalid_weights_err(aptos_framework: &signer, vetoken: &signer) {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
-        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 101);
+        initialize<FakeCoinA, FakeCoinB>(vetoken, 150, 0);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
