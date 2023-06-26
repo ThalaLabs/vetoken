@@ -339,7 +339,9 @@ module vetoken::vetoken {
 
     #[view] /// Returns if this user currently has a locked VeToken
     public fun locked<CoinType>(account_addr: address): bool acquires VeTokenInfo, VeTokenStore {
-        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
+        if (!is_account_registered<CoinType>(account_addr)) {
+            return false
+        };
 
         let now_epoch = now_epoch<CoinType>();
         let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);

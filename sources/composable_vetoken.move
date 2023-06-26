@@ -1,6 +1,7 @@
 module vetoken::composable_vetoken {
     use std::signer;
 
+    use aptos_framework::coin::{Self, Coin};
     use aptos_std::type_info;
     use aptos_std::math64;
 
@@ -10,9 +11,11 @@ module vetoken::composable_vetoken {
     /// Errors
     ///
 
-    const ERR_VETOKEN_UNINITIALIZED: u64 = 0;
-    const ERR_COMPOSABLE_VETOKEN_INITIALIZED: u64 = 1;
-    const ERR_COMPOSABLE_VETOKEN_UNINITIALIZED: u64 = 2;
+    const ERR_COMPOSABLE_VETOKEN_INITIALIZED: u64 = 0;
+    const ERR_COMPOSABLE_VETOKEN_UNINITIALIZED: u64 = 1;
+
+    // VeToken Errors
+    const ERR_VETOKEN_UNINITIALIZED: u64 = 50;
 
     // Composable VeToken Errors
     const ERR_COMPOSABLE_VETOKEN_COIN_ADDRESS_MISMATCH: u64 = 100;
@@ -51,6 +54,64 @@ module vetoken::composable_vetoken {
         move_to(account, ComposableVeToken<CoinTypeA, CoinTypeB> { weight_percent_coin_a, weight_percent_coin_b });
     }
 
+    /// Lock two tokens for the `ComposableVeToken` configuration.
+    ///
+    /// NOTE: This asserts that the account does not have any VeTokens locked for either coin type
+    public fun lock<CoinTypeA, CoinTypeB>(account: &signer, coin_a: Coin<CoinTypeA>, coin_b: Coin<CoinTypeB>, locked_epochs: u64) {
+        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN_UNINITIALIZED);
+
+        vetoken::lock(account, coin_a, locked_epochs);
+        vetoken::lock(account, coin_b, locked_epochs);
+    }
+
+    /// In the event that two underlying locks exists, this function can be used to unifify these locks such that the unlockable
+    /// epochs match for both individual locks in order to maximize the `ComposableVeToken<CoinTypeA, CoinTypeB>` balance.
+    ///
+    /// NOTE: If the user wishes to not add additional funds to the existing locks, simply supply `coin::zero` as input.
+    public fun unify_and_extend_locks<CoinTypeA, CoinTypeB>(account: &signer, coin_a: Coin<CoinTypeA>, coin_b: Coin<CoinTypeB>, desired_locked_epochs: u64) {
+        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN_UNINITIALIZED);
+
+        let account_addr = signer::address_of(account);
+        let vetoken_locked_a = vetoken::locked<CoinTypeA>(account_addr);
+        let vetoken_locked_b = vetoken::locked<CoinTypeB>(account_addr);
+
+        // The epochs are the same between `CoinTypeA` & `CoinTypeB` since `initialize`
+        // would fail if the epoch durations did not match
+        let epoch = vetoken::now_epoch<CoinTypeA>();
+
+        // handle VeToken<CoinTypeA>
+        if (!vetoken_locked_a) vetoken::lock(account, coin_a, desired_locked_epochs)
+        else {
+            let end_epoch_a = vetoken::unlockable_epoch<CoinTypeA>(account_addr);
+            let locked_epochs = end_epoch_a - epoch;
+            if (desired_locked_epochs > locked_epochs) {
+                vetoken::increase_lock_duration<CoinTypeA>(account, desired_locked_epochs - locked_epochs);
+            };
+
+            if (coin::value(&coin_a) > 0) {
+                vetoken::increase_lock_amount<CoinTypeA>(account, coin_a);
+            } else {
+                coin::destroy_zero(coin_a);
+            };
+        };
+
+        // handle VeToken<CoinTypeB>
+        if (!vetoken_locked_b) vetoken::lock(account, coin_b, desired_locked_epochs)
+        else {
+            let end_epoch_b = vetoken::unlockable_epoch<CoinTypeB>(account_addr);
+            let locked_epochs = end_epoch_b - epoch;
+            if (desired_locked_epochs > locked_epochs) {
+                vetoken::increase_lock_duration<CoinTypeB>(account, desired_locked_epochs - locked_epochs);
+            };
+
+            if (coin::value(&coin_b) > 0) {
+                vetoken::increase_lock_amount<CoinTypeB>(account, coin_b);
+            } else {
+                coin::destroy_zero(coin_b);
+            };
+        };
+    }
+
     #[view] /// Query for the ComposableVeToken<CoinTypeA, CoinTypeB> balance of this account
     public fun balance<CoinTypeA, CoinTypeB>(account_addr: address): u128 acquires ComposableVeToken {
         assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN_UNINITIALIZED);
@@ -58,8 +119,8 @@ module vetoken::composable_vetoken {
             return 0
         };
 
-        // The epochs are the same between `CoinTypeA` & `CoinTypeB` since `initialize` would fail if
-        // the epoch durations did not match
+        // The epochs are the same between `CoinTypeA` & `CoinTypeB` since `initialize`
+        // would fail if the epoch durations did not match
         let epoch = vetoken::now_epoch<CoinTypeA>();
 
         let end_epoch_a = vetoken::unlockable_epoch<CoinTypeA>(account_addr);
@@ -180,6 +241,112 @@ module vetoken::composable_vetoken {
     fun composable_vetoken_initialize_cointype_b_invalid_weights_err(aptos_framework: &signer, vetoken: &signer) {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 101);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    fun composable_vetoken_lock_ok(aptos_framework: &signer, vetoken: &signer) {
+        initialize_for_test(aptos_framework, vetoken, 1, 4);
+        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50);
+
+        let epoch = vetoken::now_epoch<FakeCoinA>();
+
+        let account = &account::create_account_for_test(@0xA);
+        lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), coin_test::mint_coin<FakeCoinB>(vetoken, 1000), 1);
+        assert!(vetoken::balance<FakeCoinA>(signer::address_of(account)) == 250, 0);
+        assert!(vetoken::balance<FakeCoinB>(signer::address_of(account)) == 250, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinA>(signer::address_of(account)) == epoch + 1, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinB>(signer::address_of(account)) == epoch + 1, 0);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    #[expected_failure(abort_code = vetoken::vetoken::ERR_VETOKEN_LOCKED)]
+    fun composable_vetoken_locked_err(aptos_framework: &signer, vetoken: &signer) {
+        initialize_for_test(aptos_framework, vetoken, 1, 4);
+        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50);
+
+        let account = &account::create_account_for_test(@0xA);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), 1);
+
+        lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), coin_test::mint_coin<FakeCoinB>(vetoken, 1000), 1);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    fun composable_vetoken_unify_and_extend_locks_ok(aptos_framework: &signer, vetoken: &signer) {
+        initialize_for_test(aptos_framework, vetoken, 1, 4);
+        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50);
+
+        // two locks with differing locks
+        let account = &account::create_account_for_test(@0xA);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 500), 1);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinB>(vetoken, 500), 2);
+
+        let epoch = vetoken::now_epoch<FakeCoinA>();
+
+        // settle on two epochs locked and equal balance of 1000
+        unify_and_extend_locks(account, coin_test::mint_coin<FakeCoinA>(vetoken, 500), coin_test::mint_coin<FakeCoinB>(vetoken, 500), 2);
+        assert!(vetoken::balance<FakeCoinA>(signer::address_of(account)) == 500, 0); // (1000 * 2) / 4
+        assert!(vetoken::balance<FakeCoinB>(signer::address_of(account)) == 500, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinA>(signer::address_of(account)) == epoch + 2, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinB>(signer::address_of(account)) == epoch + 2, 0);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    fun composable_vetoken_unify_and_extend_locks_lock_duration_only_ok(aptos_framework: &signer, vetoken: &signer) {
+        initialize_for_test(aptos_framework, vetoken, 1, 4);
+        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50);
+
+        // two locks with differing locks
+        let account = &account::create_account_for_test(@0xA);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 500), 1);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinB>(vetoken, 500), 2);
+
+        let epoch = vetoken::now_epoch<FakeCoinA>();
+
+        // settle on only two epochs without changing amounts
+        unify_and_extend_locks(account, coin::zero<FakeCoinA>(), coin::zero<FakeCoinB>(), 2);
+        assert!(vetoken::balance<FakeCoinA>(signer::address_of(account)) == 250, 0); // (500 * 2) / 4
+        assert!(vetoken::balance<FakeCoinB>(signer::address_of(account)) == 250, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinA>(signer::address_of(account)) == epoch + 2, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinB>(signer::address_of(account)) == epoch + 2, 0);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    fun composable_vetoken_unify_and_extend_locks_zero_coin_ok(aptos_framework: &signer, vetoken: &signer) {
+        initialize_for_test(aptos_framework, vetoken, 1, 4);
+        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50);
+
+        // only one lock
+        let account = &account::create_account_for_test(@0xA);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 500), 1);
+
+        let epoch = vetoken::now_epoch<FakeCoinA>();
+
+        // unify by locking `FakeCoinB` for the existing duration
+        unify_and_extend_locks(account, coin::zero<FakeCoinA>(), coin_test::mint_coin<FakeCoinB>(vetoken, 500), 1);
+        assert!(vetoken::balance<FakeCoinA>(signer::address_of(account)) == 125, 0); // (500 * 2) / 4
+        assert!(vetoken::balance<FakeCoinB>(signer::address_of(account)) == 125, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinA>(signer::address_of(account)) == epoch + 1, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinB>(signer::address_of(account)) == epoch + 1, 0);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    #[expected_failure(abort_code = vetoken::vetoken::ERR_VETOKEN_ZERO_LOCK_AMOUNT)]
+    fun composable_vetoken_unify_and_extend_locks_zero_coin_not_locked_err(aptos_framework: &signer, vetoken: &signer) {
+        initialize_for_test(aptos_framework, vetoken, 1, 4);
+        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50);
+
+        // only one lock
+        let account = &account::create_account_for_test(@0xA);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 500), 1);
+
+        let epoch = vetoken::now_epoch<FakeCoinA>();
+
+        // unify by locking `FakeCoinB` for the existing duration, however no coins are supplied
+        unify_and_extend_locks(account, coin::zero<FakeCoinA>(), coin::zero<FakeCoinB>(), 1);
+        assert!(vetoken::balance<FakeCoinA>(signer::address_of(account)) == 125, 0); // (500 * 2) / 4
+        assert!(vetoken::balance<FakeCoinB>(signer::address_of(account)) == 125, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinA>(signer::address_of(account)) == epoch + 1, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinB>(signer::address_of(account)) == epoch + 1, 0);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
