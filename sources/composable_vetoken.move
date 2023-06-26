@@ -203,14 +203,15 @@ module vetoken::composable_vetoken {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50);
 
-        // lock the same amounts for both coins
+        // lock the same amounts for both coins. However `FakeCoinB` has twice as long a lock duration.
         let account = &account::create_account_for_test(@0xA);
         vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), 1);
         vetoken::lock(account, coin_test::mint_coin<FakeCoinB>(vetoken, 1000), 2);
         assert!(vetoken::balance<FakeCoinA>(signer::address_of(account)) == 250, 0);
         assert!(vetoken::balance<FakeCoinB>(signer::address_of(account)) == 500, 0);
 
-        // Only half of FakeCoinB contributes to the total balance
+        // Only half of FakeCoinB contributes to the total balance. `FakeCoinB` is treated as if it locks in
+        // 1 epoch for uniformity with the configuration
         assert!(balance<FakeCoinA, FakeCoinB>(signer::address_of(account)) == 375, 0);
     }
 
