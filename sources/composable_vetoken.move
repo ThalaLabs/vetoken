@@ -111,48 +111,41 @@ module vetoken::composable_vetoken {
             };
         };
     }
-
-    #[view] /// Query for the ComposableVeToken<CoinTypeA, CoinTypeB> balance of this account
+    
+    #[view] /// Query for the current ComposableVeToken<CoinTypeA, CoinTypeB> balance of this account
     public fun balance<CoinTypeA, CoinTypeB>(account_addr: address): u128 acquires ComposableVeToken {
-        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN_UNINITIALIZED);
-        if (!vetoken::locked<CoinTypeA>(account_addr) || !vetoken::locked<CoinTypeB>(account_addr)) {
-            return 0
-        };
-
         // The epochs are the same between `CoinTypeA` & `CoinTypeB` since `initialize`
         // would fail if the epoch durations did not match
-        let epoch = vetoken::now_epoch<CoinTypeA>();
+        past_balance<CoinTypeA, CoinTypeB>(account_addr, vetoken::now_epoch<CoinTypeA>())
+    }
 
-        let end_epoch_a = vetoken::unlockable_epoch<CoinTypeA>(account_addr);
-        let end_epoch_b = vetoken::unlockable_epoch<CoinTypeB>(account_addr);
+    #[view] /// Query for the ComposableVeToken<CoinTypeA, CoinTypeB> balance of this account at a given epoch
+    public fun past_balance<CoinTypeA, CoinTypeB>(account_addr: address, epoch: u64): u128 acquires ComposableVeToken {
+        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN_UNINITIALIZED);
+
+        let end_epoch_a = if (vetoken::locked<CoinTypeA>(account_addr)) vetoken::unlockable_epoch<CoinTypeA>(account_addr) else 0;
+        let end_epoch_b = if (vetoken::locked<CoinTypeB>(account_addr)) vetoken::unlockable_epoch<CoinTypeB>(account_addr) else 0;
         let end_epoch = math64::min(end_epoch_a, end_epoch_b);
         if (epoch >= end_epoch) {
             return 0
         };
 
-        let unnormalized_balance_a = 0u128;
-        let unnormalized_balance_b = 0u128;
-        while (epoch < end_epoch) {
-            // NOTE: If the end epochs differ, the appropriate "strength" factor for the epoch must be used
+        // NOTE: If the end epochs differ, the appropriate "strength" factor for the epoch must be used
 
-            let epoch_balance_a = vetoken::unnormalized_past_balance<CoinTypeA>(account_addr, epoch);
-            if (end_epoch_a > end_epoch) {
-                let old_strength_factor = (end_epoch_a - epoch as u128);
-                let new_strength_factor = (end_epoch - epoch as u128);
-                epoch_balance_a = math128::mul_div(new_strength_factor, epoch_balance_a, old_strength_factor);
-            };
+        // VeToken<CoinTypeA> Component
+        let unnormalized_balance_a = vetoken::unnormalized_past_balance<CoinTypeA>(account_addr, epoch);
+        if (end_epoch_a > end_epoch) {
+            let old_strength_factor = (end_epoch_a - epoch as u128);
+            let new_strength_factor = (end_epoch - epoch as u128);
+            unnormalized_balance_a = math128::mul_div(new_strength_factor, unnormalized_balance_a, old_strength_factor);
+        };
 
-
-            let epoch_balance_b  = vetoken::unnormalized_past_balance<CoinTypeB>(account_addr, epoch);
-            if (end_epoch_b > end_epoch) {
-                let old_strength_factor = (end_epoch_b - epoch as u128);
-                let new_strength_factor = (end_epoch - epoch as u128);
-                epoch_balance_b = math128::mul_div(new_strength_factor, epoch_balance_b, old_strength_factor);
-            };
-
-            unnormalized_balance_a = unnormalized_balance_a + epoch_balance_a;
-            unnormalized_balance_b = unnormalized_balance_b + epoch_balance_b;
-            epoch = epoch + 1;
+        // VeToken<CoinTypeB> Component
+        let unnormalized_balance_b  = vetoken::unnormalized_past_balance<CoinTypeB>(account_addr, epoch);
+        if (end_epoch_b > end_epoch) {
+            let old_strength_factor = (end_epoch_b - epoch as u128);
+            let new_strength_factor = (end_epoch - epoch as u128);
+            unnormalized_balance_b = math128::mul_div(new_strength_factor, unnormalized_balance_b, old_strength_factor);
         };
 
         let composable_vetoken = borrow_global<ComposableVeToken<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>());
