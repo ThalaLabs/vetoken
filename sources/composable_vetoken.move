@@ -10,29 +10,29 @@ module vetoken::composable_vetoken {
     /// Errors
     ///
 
-    const ERR_COMPOSABLE_VETOKEN_INITIALIZED: u64 = 0;
-    const ERR_COMPOSABLE_VETOKEN_UNINITIALIZED: u64 = 1;
+    const ERR_COMPOSABLE_VETOKEN2_INITIALIZED: u64 = 0;
+    const ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED: u64 = 1;
 
     // VeToken Errors
     const ERR_VETOKEN_UNINITIALIZED: u64 = 50;
 
     // Composable VeToken Errors
-    const ERR_COMPOSABLE_VETOKEN_COIN_ADDRESS_MISMATCH: u64 = 100;
-    const ERR_COMPOSABLE_VETOKEN_EPOCH_DURATION_MISMATCH: u64 = 101;
-    const ERR_COMPOSABLE_VETOKEN_INVALID_WEIGHTS: u64 = 102;
-    const ERR_COMPOSABLE_VETOKEN_NONMUTABLE_WEIGHTS: u64 = 103;
+    const ERR_COMPOSABLE_VETOKEN2_COIN_ADDRESS_MISMATCH: u64 = 100;
+    const ERR_COMPOSABLE_VETOKEN2_EPOCH_DURATION_MISMATCH: u64 = 101;
+    const ERR_COMPOSABLE_VETOKEN2_INVALID_WEIGHTS: u64 = 102;
+    const ERR_COMPOSABLE_VETOKEN2_NONMUTABLE_WEIGHTS: u64 = 103;
 
     ///
     /// Resources
     ///
 
-    struct ComposableVeToken<phantom CoinTypeA, phantom CoinTypeB> has key {
+    struct ComposedVeToken2<phantom CoinTypeA, phantom CoinTypeB> has key {
         weight_percent_coin_a: u128,
         weight_percent_coin_b: u128,
         mutable_weights: bool
     }
 
-    /// Create a ComposableVeToken over `CoinTypeA` and `CoinTypeB`. Only `CoinTypeA` is allowed to instantiate
+    /// Create a ComposedVeToken2 over `CoinTypeA` and `CoinTypeB`. Only `CoinTypeA` is allowed to instantiate
     /// this configuration.
     ///
     /// @param weight_percent_coin_a percent weight `CoinTypeA` contributes to the total balance
@@ -40,65 +40,65 @@ module vetoken::composable_vetoken {
     /// @param mutable_weights indicator if the weight configuration can change post-initialization. Depending on the implementation,
     ///                        this is prone to centralization risk.
     ///
-    /// Note: `ComposableVeToken` does not lock coins seperately from the `vetoken::vetoken` module. Rather `ComposableVetoken`
+    /// Note: `ComposedVeToken2` does not lock coins seperately from the `vetoken::vetoken` module. Rather `ComposedVeToken2`
     /// is a sort-of "view-based" wrapper over `VeToken`.
     public entry fun initialize<CoinTypeA, CoinTypeB>(account: &signer, weight_percent_coin_a: u128, weight_percent_coin_b: u128, mutable_weights: bool) {
-        assert!(!initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN_INITIALIZED);
+        assert!(!initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_INITIALIZED);
         assert!(vetoken::initialized<CoinTypeA>(), ERR_VETOKEN_UNINITIALIZED);
         assert!(vetoken::initialized<CoinTypeB>(), ERR_VETOKEN_UNINITIALIZED);
 
         // assert composable vetoken configuration
-        assert!(vetoken::seconds_in_epoch<CoinTypeA>() == vetoken::seconds_in_epoch<CoinTypeB>(), ERR_COMPOSABLE_VETOKEN_EPOCH_DURATION_MISMATCH);
-        assert!(weight_percent_coin_a > 0 && weight_percent_coin_b > 0, ERR_COMPOSABLE_VETOKEN_INVALID_WEIGHTS); 
+        assert!(vetoken::seconds_in_epoch<CoinTypeA>() == vetoken::seconds_in_epoch<CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_EPOCH_DURATION_MISMATCH);
+        assert!(weight_percent_coin_a > 0 && weight_percent_coin_b > 0, ERR_COMPOSABLE_VETOKEN2_INVALID_WEIGHTS); 
 
-        // the owner of the first coin slot controls configuration for this `ComposableVeToken`.
-        assert!(account_address<CoinTypeA>() == signer::address_of(account), ERR_COMPOSABLE_VETOKEN_COIN_ADDRESS_MISMATCH);
-        move_to(account, ComposableVeToken<CoinTypeA, CoinTypeB> { weight_percent_coin_a, weight_percent_coin_b, mutable_weights });
+        // the owner of the first coin slot controls configuration for this `ComposedVeToken2`.
+        assert!(account_address<CoinTypeA>() == signer::address_of(account), ERR_COMPOSABLE_VETOKEN2_COIN_ADDRESS_MISMATCH);
+        move_to(account, ComposedVeToken2<CoinTypeA, CoinTypeB> { weight_percent_coin_a, weight_percent_coin_b, mutable_weights });
     }
 
-    public entry fun update_weights<CoinTypeA, CoinTypeB>(account: &signer, weight_percent_coin_a: u128, weight_percent_coin_b: u128) acquires ComposableVeToken {
-        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN_UNINITIALIZED);
-        assert!(account_address<CoinTypeA>() == signer::address_of(account), ERR_COMPOSABLE_VETOKEN_COIN_ADDRESS_MISMATCH);
-        assert!(weight_percent_coin_a > 0 && weight_percent_coin_b > 0, ERR_COMPOSABLE_VETOKEN_INVALID_WEIGHTS); 
+    public entry fun update_weights<CoinTypeA, CoinTypeB>(account: &signer, weight_percent_coin_a: u128, weight_percent_coin_b: u128) acquires ComposedVeToken2 {
+        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
+        assert!(account_address<CoinTypeA>() == signer::address_of(account), ERR_COMPOSABLE_VETOKEN2_COIN_ADDRESS_MISMATCH);
+        assert!(weight_percent_coin_a > 0 && weight_percent_coin_b > 0, ERR_COMPOSABLE_VETOKEN2_INVALID_WEIGHTS); 
 
-        let composable_vetoken = borrow_global_mut<ComposableVeToken<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>());
-        assert!(composable_vetoken.mutable_weights, ERR_COMPOSABLE_VETOKEN_NONMUTABLE_WEIGHTS);
+        let composable_vetoken = borrow_global_mut<ComposedVeToken2<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>());
+        assert!(composable_vetoken.mutable_weights, ERR_COMPOSABLE_VETOKEN2_NONMUTABLE_WEIGHTS);
 
         composable_vetoken.weight_percent_coin_a = weight_percent_coin_a;
         composable_vetoken.weight_percent_coin_b = weight_percent_coin_b;
     }
 
-    /// Lock two tokens for the `ComposableVeToken` configuration.
+    /// Lock two tokens for the `ComposedVeToken2` configuration.
     public fun lock<CoinTypeA, CoinTypeB>(account: &signer, coin_a: Coin<CoinTypeA>, coin_b: Coin<CoinTypeB>, locked_epochs: u64) {
-        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN_UNINITIALIZED);
+        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
 
         vetoken::lock(account, coin_a, locked_epochs);
         vetoken::lock(account, coin_b, locked_epochs);
     }
 
     #[view] /// Query for the weight configuration
-    public fun weight_percents<CoinTypeA, CoinTypeB>(): (u128, u128) acquires ComposableVeToken {
-        let composable_vetoken = borrow_global<ComposableVeToken<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>());
+    public fun weight_percents<CoinTypeA, CoinTypeB>(): (u128, u128) acquires ComposedVeToken2 {
+        let composable_vetoken = borrow_global<ComposedVeToken2<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>());
         (composable_vetoken.weight_percent_coin_a, composable_vetoken.weight_percent_coin_b)
     }
 
-    #[view] /// Query for the current ComposableVeToken<CoinTypeA, CoinTypeB> balance of this account
-    public fun balance<CoinTypeA, CoinTypeB>(account_addr: address): u128 acquires ComposableVeToken {
+    #[view] /// Query for the current ComposedVeToken2<CoinTypeA, CoinTypeB> balance of this account
+    public fun balance<CoinTypeA, CoinTypeB>(account_addr: address): u128 acquires ComposedVeToken2 {
         // The epochs are the same between `CoinTypeA` & `CoinTypeB` since `initialize`
         // would fail if the epoch durations did not match
         past_balance<CoinTypeA, CoinTypeB>(account_addr, vetoken::now_epoch<CoinTypeA>())
     }
 
-    #[view] /// Query for the current ComposableVeToken<CoinTypeA, CoinTypeB> total supply
-    public fun total_supply<CoinTypeA, CoinTypeB>(): u128 acquires ComposableVeToken {
+    #[view] /// Query for the current ComposedVeToken2<CoinTypeA, CoinTypeB> total supply
+    public fun total_supply<CoinTypeA, CoinTypeB>(): u128 acquires ComposedVeToken2 {
         // The epochs are the same between `CoinTypeA` & `CoinTypeB` since `initialize`
         // would fail if the epoch durations did not match
         past_total_supply<CoinTypeA, CoinTypeB>(vetoken::now_epoch<CoinTypeA>())
     }
 
-    #[view] /// Query for the ComposableVeToken<CoinTypeA, CoinTypeB> balance of this account at a given epoch
-    public fun past_balance<CoinTypeA, CoinTypeB>(account_addr: address, epoch: u64): u128 acquires ComposableVeToken {
-        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN_UNINITIALIZED);
+    #[view] /// Query for the ComposedVeToken2<CoinTypeA, CoinTypeB> balance of this account at a given epoch
+    public fun past_balance<CoinTypeA, CoinTypeB>(account_addr: address, epoch: u64): u128 acquires ComposedVeToken2 {
+        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
 
         // VeToken<CoinTypeA> Component
         let balance_a = (vetoken::past_balance<CoinTypeA>(account_addr, epoch) as u128);
@@ -111,9 +111,9 @@ module vetoken::composable_vetoken {
         ((balance_a * weight_percent_coin_a) + (balance_b * weight_percent_coin_b)) / 100
     }
 
-    #[view] /// Query for the ComposableVeToken<CoinTypeA, CoinTypeB> total supply at a given epoch
-    public fun past_total_supply<CoinTypeA, CoinTypeB>(epoch: u64): u128 acquires ComposableVeToken {
-        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN_UNINITIALIZED);
+    #[view] /// Query for the ComposedVeToken2<CoinTypeA, CoinTypeB> total supply at a given epoch
+    public fun past_total_supply<CoinTypeA, CoinTypeB>(epoch: u64): u128 acquires ComposedVeToken2 {
+        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
 
         // VeToken<CoinTypeA> Component
         let total_supply_a = vetoken::past_total_supply<CoinTypeA>(epoch);
@@ -122,16 +122,13 @@ module vetoken::composable_vetoken {
         let total_supply_b = vetoken::past_total_supply<CoinTypeB>(epoch);
 
         // Apply Mutlipliers
-        let composable_vetoken = borrow_global<ComposableVeToken<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>());
-        total_supply_a = total_supply_a * composable_vetoken.weight_percent_coin_a;
-        total_supply_b = total_supply_b * composable_vetoken.weight_percent_coin_b;
-
-        (total_supply_a + total_supply_b) / 100
+        let (weight_percent_coin_a, weight_percent_coin_b) = weight_percents<CoinTypeA, CoinTypeB>();
+        ((total_supply_a * weight_percent_coin_a) + (total_supply_b * weight_percent_coin_b)) / 100
     }
 
-    #[view] /// Check if this coin pair has a `ComposableVeToken<CoinTypeA, CoinTypeB>` configuration
+    #[view] /// Check if this coin pair has a `ComposedVeToken2<CoinTypeA, CoinTypeB>` configuration
     public fun initialized<CoinTypeA, CoinTypeB>(): bool {
-        exists<ComposableVeToken<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>())
+        exists<ComposedVeToken2<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>())
     }
 
     // Internal Helpers
@@ -190,7 +187,7 @@ module vetoken::composable_vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN_COIN_ADDRESS_MISMATCH)]
+    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN2_COIN_ADDRESS_MISMATCH)]
     fun composable_vetoken_initialize_address_mismatch_err(aptos_framework: &signer, vetoken: &signer) {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         let account = &account::create_account_for_test(@0xA);
@@ -198,21 +195,21 @@ module vetoken::composable_vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN_INVALID_WEIGHTS)]
+    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN2_INVALID_WEIGHTS)]
     fun composable_vetoken_initialize_cointype_a_invalid_weights_err(aptos_framework: &signer, vetoken: &signer) {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 0, 50, true);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN_INVALID_WEIGHTS)]
+    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN2_INVALID_WEIGHTS)]
     fun composable_vetoken_initialize_cointype_b_invalid_weights_err(aptos_framework: &signer, vetoken: &signer) {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 150, 0, true);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun composable_vetoken_weight_configuration_ok(aptos_framework: &signer, vetoken: &signer) acquires ComposableVeToken {
+    fun composable_vetoken_weight_configuration_ok(aptos_framework: &signer, vetoken: &signer) acquires ComposedVeToken2 {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
 
@@ -227,8 +224,8 @@ module vetoken::composable_vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN_INVALID_WEIGHTS)]
-    fun composable_vetoken_update_weights_cointype_a_invalid_weights_err(aptos_framework: &signer, vetoken: &signer) acquires ComposableVeToken {
+    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN2_INVALID_WEIGHTS)]
+    fun composable_vetoken_update_weights_cointype_a_invalid_weights_err(aptos_framework: &signer, vetoken: &signer) acquires ComposedVeToken2 {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 150, 100, true);
 
@@ -236,8 +233,8 @@ module vetoken::composable_vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN_INVALID_WEIGHTS)]
-    fun composable_vetoken_update_weights_cointype_b_invalid_weights_err(aptos_framework: &signer, vetoken: &signer) acquires ComposableVeToken {
+    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN2_INVALID_WEIGHTS)]
+    fun composable_vetoken_update_weights_cointype_b_invalid_weights_err(aptos_framework: &signer, vetoken: &signer) acquires ComposedVeToken2 {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 150, 100, true);
 
@@ -245,8 +242,8 @@ module vetoken::composable_vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN_COIN_ADDRESS_MISMATCH)]
-    fun composable_vetoken_update_weights_coin_address_mismatch_err(aptos_framework: &signer, vetoken: &signer) acquires ComposableVeToken {
+    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN2_COIN_ADDRESS_MISMATCH)]
+    fun composable_vetoken_update_weights_coin_address_mismatch_err(aptos_framework: &signer, vetoken: &signer) acquires ComposedVeToken2 {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 150, 100, true);
 
@@ -255,8 +252,8 @@ module vetoken::composable_vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN_NONMUTABLE_WEIGHTS)]
-    fun composable_vetoken_update_weights_nonmutable_err(aptos_framework: &signer, vetoken: &signer) acquires ComposableVeToken {
+    #[expected_failure(abort_code = ERR_COMPOSABLE_VETOKEN2_NONMUTABLE_WEIGHTS)]
+    fun composable_vetoken_update_weights_nonmutable_err(aptos_framework: &signer, vetoken: &signer) acquires ComposedVeToken2 {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 150, 100, false);
 
@@ -292,7 +289,7 @@ module vetoken::composable_vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun composable_vetoken_balance_ok(aptos_framework: &signer, vetoken: &signer) acquires ComposableVeToken {
+    fun composable_vetoken_balance_ok(aptos_framework: &signer, vetoken: &signer) acquires ComposedVeToken2 {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
 
@@ -308,7 +305,7 @@ module vetoken::composable_vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun composable_vetoken_differing_lock_period_ok(aptos_framework: &signer, vetoken: &signer) acquires ComposableVeToken {
+    fun composable_vetoken_differing_lock_period_ok(aptos_framework: &signer, vetoken: &signer) acquires ComposedVeToken2 {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
 
@@ -324,7 +321,7 @@ module vetoken::composable_vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun composable_vetoken_zero_ok(aptos_framework: &signer, vetoken: &signer) acquires ComposableVeToken {
+    fun composable_vetoken_zero_ok(aptos_framework: &signer, vetoken: &signer) acquires ComposedVeToken2 {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
 
