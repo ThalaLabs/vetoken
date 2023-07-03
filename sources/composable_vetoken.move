@@ -96,6 +96,15 @@ module vetoken::composable_vetoken {
         past_total_supply<CoinTypeA, CoinTypeB>(vetoken::now_epoch<CoinTypeA>())
     }
 
+    #[view]
+    /// Query for the current ComposedVeToken2<CoinTypeA, CoinTypeB> underlying total supply
+    /// Note it returns total_supply * 100
+    public fun weighted_underlying_total_supply<CoinTypeA, CoinTypeB>(): (u128, u128) acquires ComposedVeToken2 {
+        // The epochs are the same between `CoinTypeA` & `CoinTypeB` since `initialize`
+        // would fail if the epoch durations did not match
+        past_weighted_underlying_total_supply<CoinTypeA, CoinTypeB>(vetoken::now_epoch<CoinTypeA>())
+    }
+
     #[view] /// Query for the ComposedVeToken2<CoinTypeA, CoinTypeB> balance of this account at a given epoch
     public fun past_balance<CoinTypeA, CoinTypeB>(account_addr: address, epoch: u64): u128 acquires ComposedVeToken2 {
         assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
@@ -113,6 +122,14 @@ module vetoken::composable_vetoken {
 
     #[view] /// Query for the ComposedVeToken2<CoinTypeA, CoinTypeB> total supply at a given epoch
     public fun past_total_supply<CoinTypeA, CoinTypeB>(epoch: u64): u128 acquires ComposedVeToken2 {
+        let (weighted_total_supply_a, weighted_total_supply_b) = past_weighted_underlying_total_supply<CoinTypeA, CoinTypeB>(epoch);
+        (weighted_total_supply_a + weighted_total_supply_b) / 100
+    }
+
+    #[view]
+    /// Query for the ComposedVeToken2<CoinTypeA, CoinTypeB> total supply at a given epoch
+    /// Note it returns total_supply * 100
+    public fun past_weighted_underlying_total_supply<CoinTypeA, CoinTypeB>(epoch: u64): (u128, u128) acquires ComposedVeToken2 {
         assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
 
         // VeToken<CoinTypeA> Component
@@ -123,7 +140,7 @@ module vetoken::composable_vetoken {
 
         // Apply Mutlipliers
         let (weight_percent_coin_a, weight_percent_coin_b) = weight_percents<CoinTypeA, CoinTypeB>();
-        ((total_supply_a * weight_percent_coin_a) + (total_supply_b * weight_percent_coin_b)) / 100
+        (total_supply_a * weight_percent_coin_a, total_supply_b * weight_percent_coin_b)
     }
 
     #[view] /// Check if this coin pair has a `ComposedVeToken2<CoinTypeA, CoinTypeB>` configuration
