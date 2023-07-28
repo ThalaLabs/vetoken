@@ -136,7 +136,6 @@ module vetoken::vetoken {
 
         let amount = (coin::value(&coin) as u128);
         assert!(amount > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
-        assert!(locked_epochs > 0, ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH);
 
         let now_epoch = now_epoch<CoinType>();
         let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
