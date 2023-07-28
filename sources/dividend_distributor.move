@@ -19,6 +19,7 @@ module vetoken::dividend_distributor {
 
     const ERR_DIVIDEND_DISTRIBUTOR_UNAUTHORIZED: u64 = 0;
     const ERR_DIVIDEND_DISTRIBUTOR_UNINITIALIZED: u64 = 1;
+    const ERR_DIVIDEND_DISTRIBUTOR_ALREADY_INITIALIZED: u64 = 2;
 
     struct DividendDistributor<phantom LockCoin, phantom DividendCoin> has key {
         /// Total claimable dividend
@@ -63,6 +64,7 @@ module vetoken::dividend_distributor {
             signer::address_of(account) == account_address<LockCoin>(),
             ERR_DIVIDEND_DISTRIBUTOR_UNAUTHORIZED
         );
+        assert!(!initialized<LockCoin, DividendCoin>(), ERR_DIVIDEND_DISTRIBUTOR_ALREADY_INITIALIZED);
 
         move_to(account, DividendDistributor<LockCoin, DividendCoin> {
             dividend: coin::zero(),
