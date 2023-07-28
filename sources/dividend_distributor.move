@@ -19,6 +19,7 @@ module vetoken::dividend_distributor {
 
     const ERR_DIVIDEND_DISTRIBUTOR_UNAUTHORIZED: u64 = 0;
     const ERR_DIVIDEND_DISTRIBUTOR_UNINITIALIZED: u64 = 1;
+    const ERR_DIVIDEND_DISTRIBUTOR_ALREADY_INITIALIZED: u64 = 2;
 
     struct DividendDistributor<phantom LockCoin, phantom DividendCoin> has key {
         /// Total claimable dividend
@@ -63,6 +64,7 @@ module vetoken::dividend_distributor {
             signer::address_of(account) == account_address<LockCoin>(),
             ERR_DIVIDEND_DISTRIBUTOR_UNAUTHORIZED
         );
+        assert!(!initialized<LockCoin, DividendCoin>(), ERR_DIVIDEND_DISTRIBUTOR_ALREADY_INITIALIZED);
 
         move_to(account, DividendDistributor<LockCoin, DividendCoin> {
             dividend: coin::zero(),
@@ -113,9 +115,9 @@ module vetoken::dividend_distributor {
     public fun claim<LockCoin, DividendCoin>(account: &signer): Coin<DividendCoin> acquires DividendDistributor {
         assert!(initialized<LockCoin, DividendCoin>(), ERR_DIVIDEND_DISTRIBUTOR_UNINITIALIZED);
 
-        let claimable = claimable<LockCoin, DividendCoin>(account);
-
         let account_addr = signer::address_of(account);
+        let claimable = claimable<LockCoin, DividendCoin>(account_addr);
+
         let distributor = borrow_global_mut<DividendDistributor<LockCoin, DividendCoin>>(account_address<LockCoin>());
         smart_table::upsert(&mut distributor.next_claimable, account_addr, smart_vector::length(&distributor.epoch_dividend
         ));
@@ -142,8 +144,7 @@ module vetoken::dividend_distributor {
     /// Claimable dividend as a VeToken<LockCoin> holder.
     /// Only past epochs are claimable, this is b/c holder's weight in the current epoch subjects to changes
     /// through increase_lock_duration or increase_lock_amount.
-    public fun claimable<LockCoin, DividendCoin>(account: &signer): u64 acquires DividendDistributor {
-        let account_addr = signer::address_of(account);
+    public fun claimable<LockCoin, DividendCoin>(account_addr: address): u64 acquires DividendDistributor {
         let total_claimable = 0;
         let distributor = borrow_global<DividendDistributor<LockCoin, DividendCoin>>(account_address<LockCoin>());
         let now_epoch = now_epoch<LockCoin>();
@@ -203,11 +204,11 @@ module vetoken::dividend_distributor {
         distribute<FakeLockCoin, FakeDividendCoin>(coin_test::mint_coin<FakeDividendCoin>(vetoken, 100000000));
 
         // cannot claim dividend distributed in the current epoch
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(user) == 0, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xA) == 0, 0);
 
         // can claim dividend distributed in the past epochs
         timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeLockCoin>());
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(user) == 100000000, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xA) == 100000000, 0);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
@@ -230,8 +231,8 @@ module vetoken::dividend_distributor {
 
         // can claim dividend distributed in the past epochs
         timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeLockCoin>());
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(u1) == 40000000, 0);
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(u2) == 160000000, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xA) == 40000000, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xB) == 160000000, 0);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
@@ -252,7 +253,7 @@ module vetoken::dividend_distributor {
         distribute<FakeLockCoin, FakeDividendCoin>(coin_test::mint_coin<FakeDividendCoin>(vetoken, 100000000));
 
         timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeLockCoin>());
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(u1) == 100000000, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xA) == 100000000, 0);
         let reward_u1_epoch0 = claim<FakeLockCoin, FakeDividendCoin>(u1);
         assert!(coin::value(&reward_u1_epoch0) == 100000000, 0);
         coin_test::burn_coin(vetoken, reward_u1_epoch0);
@@ -265,8 +266,8 @@ module vetoken::dividend_distributor {
         distribute<FakeLockCoin, FakeDividendCoin>(coin_test::mint_coin<FakeDividendCoin>(vetoken, 100000000));
 
         timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeLockCoin>());
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(u1) == 50000000, 0);
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(u2) == 50000000, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xA) == 50000000, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xB) == 50000000, 0);
         let reward_u1_epoch1 = claim<FakeLockCoin, FakeDividendCoin>(u1);
         let reward_u2_epoch1 = claim<FakeLockCoin, FakeDividendCoin>(u2);
         assert!(coin::value(&reward_u1_epoch1) == 50000000, 0);
@@ -282,9 +283,9 @@ module vetoken::dividend_distributor {
         distribute<FakeLockCoin, FakeDividendCoin>(coin_test::mint_coin<FakeDividendCoin>(vetoken, 100000000));
 
         timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeLockCoin>());
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(u1) == 25000000, 0);
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(u2) == 25000000, 0);
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(u3) == 50000000, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xA) == 25000000, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xB) == 25000000, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xC) == 50000000, 0);
         let reward_u1_epoch2 = claim<FakeLockCoin, FakeDividendCoin>(u1);
         let reward_u2_epoch2 = claim<FakeLockCoin, FakeDividendCoin>(u2);
         let reward_u3_epoch2 = claim<FakeLockCoin, FakeDividendCoin>(u3);
@@ -303,15 +304,15 @@ module vetoken::dividend_distributor {
         vetoken::increase_lock_duration<FakeLockCoin>(u3, 1);
 
         timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeLockCoin>());
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(u1) == 0, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xA) == 0, 0);
         let unlocked_u1 = vetoken::unlock<FakeLockCoin>(u1);
         let unlocked_u2 = vetoken::unlock<FakeLockCoin>(u2);
         distribute<FakeLockCoin, FakeDividendCoin>(coin_test::mint_coin<FakeDividendCoin>(vetoken, 100000000));
 
         timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeLockCoin>());
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(u1) == 0, 0);
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(u2) == 0, 0);
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(u3) == 100000000, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xA) == 0, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xB) == 0, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xC) == 100000000, 0);
         let reward_u1_epoch52 = claim<FakeLockCoin, FakeDividendCoin>(u1);
         let reward_u2_epoch52 = claim<FakeLockCoin, FakeDividendCoin>(u2);
         let reward_u3_epoch52 = claim<FakeLockCoin, FakeDividendCoin>(u3);
