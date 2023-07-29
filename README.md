@@ -1,4 +1,4 @@
-# Vote Escrowed Token (veToken)
+# Aptos Vote Escrowed Token (veToken)
 
 This repo is a reference implementation of veToken, which represents a specific duration locked token. A user, for example, can lock a token for a certain number of epochs, during which they are non spendable. The tokens become available or "unlock" after the specified epochs pass. Users can also delegate their token balance to other accounts. A sample utility could include additional governance power to vote escrowed token holders. 
 
