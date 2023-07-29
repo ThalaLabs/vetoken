@@ -100,19 +100,6 @@ module vetoken::vetoken {
         });
     }
 
-    /// Update the minimum epochs a token must be locked for.
-    public entry fun set_min_locked_epochs<CoinType>(account: &signer, min_locked_epochs: u64) acquires VeTokenInfo {
-        assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
-
-        let account_addr = signer::address_of(account);
-        assert!(account_address<CoinType>() == account_addr, ERR_VETOKEN_COIN_ADDRESS_MISMATCH);
-
-        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_addr);
-        assert!(min_locked_epochs > 0 && min_locked_epochs <= vetoken_info.max_locked_epochs, ERR_VETOKEN_INVALID_LOCK_DURATION);
-
-        vetoken_info.min_locked_epochs = min_locked_epochs;
-    }
-
     /// Register `account` to be able to hold `VeToken<CoinType>`.
     public entry fun register<CoinType>(account: &signer) {
         assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
@@ -463,25 +450,6 @@ module vetoken::vetoken {
     fun vetoken_initialize_address_mismatch_err() {
         let account = &account::create_account_for_test(@0xA);
         initialize<FakeCoin>(account, 1, 52, SECONDS_IN_WEEK);
-    }
-
-    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    #[expected_failure(abort_code = ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH)]
-    fun set_min_locked_epochs_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
-        initialize_for_test(aptos_framework, vetoken, 1, 52);
-
-        let u1 = &account::create_account_for_test(@0xA);
-        let u2 = &account::create_account_for_test(@0xB);
-        register<FakeCoin>(u1);
-        register<FakeCoin>(u2);
-
-        // we can unlock in the next epoch with a minimum of 1
-        assert!(now_epoch<FakeCoin>() == 0, 0);
-        lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 1);
-
-        // Fails as the minimum is now 2
-        set_min_locked_epochs<FakeCoin>(vetoken, 2);
-        lock(u2, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 1);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
