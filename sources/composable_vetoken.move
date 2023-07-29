@@ -4,6 +4,7 @@ module vetoken::composable_vetoken {
     use aptos_framework::coin::Coin;
     use aptos_std::type_info;
 
+    use vetoken::dividend_distributor;
     use vetoken::vetoken;
 
     ///
@@ -141,6 +142,12 @@ module vetoken::composable_vetoken {
         // Apply Mutlipliers
         let (weight_percent_coin_a, weight_percent_coin_b) = weight_percents<CoinTypeA, CoinTypeB>();
         (total_supply_a * weight_percent_coin_a, total_supply_b * weight_percent_coin_b)
+    }
+
+    #[view]
+    /// Return the total amount of `DividendCoin` claimable for two types of underlying VeToken
+    public fun claimable<CoinTypeA, CoinTypeB, DividendCoin>(account_addr: address): u64 {
+        dividend_distributor::claimable<CoinTypeA, DividendCoin>(account_addr) + dividend_distributor::claimable<CoinTypeB, DividendCoin>(account_addr)
     }
 
     #[view] /// Check if this coin pair has a `ComposedVeToken2<CoinTypeA, CoinTypeB>` configuration

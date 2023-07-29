@@ -1,10 +1,15 @@
 module vetoken::scripts {
     use std::signer;
 
+    use aptos_std::type_info;
     use aptos_framework::coin;
 
+    use vetoken::composable_vetoken;
     use vetoken::dividend_distributor;
     use vetoken::vetoken;
+    
+    /// NullDividend is used to indicate that the dividend coin type is not present
+    struct NullDividend {}
 
     public entry fun lock<CoinType>(account: &signer, amount: u64, epochs: u64) {
         let coin = coin::withdraw<CoinType>(account, amount);
@@ -28,5 +33,60 @@ module vetoken::scripts {
             coin::register<DividendCoin>(account);
         };
         coin::deposit<DividendCoin>(account_addr, dividend);
+    }
+
+    public entry fun lock_composed<LockCoinA, LockCoinB>(account: &signer, amount_a: u64, amount_b: u64, epochs: u64) {
+        let coin_a = coin::withdraw<LockCoinA>(account, amount_a);
+        let coin_b = coin::withdraw<LockCoinB>(account, amount_b);
+        composable_vetoken::lock(account, coin_a, coin_b, epochs);
+    }
+
+    public entry fun claim_composed<LockCoinA, LockCoinB, DividendCoin>(account: &signer) {
+        let dividend = dividend_distributor::claim<LockCoinA, DividendCoin>(account);
+        coin::merge(&mut dividend, dividend_distributor::claim<LockCoinB, DividendCoin>(account));
+        let account_addr = signer::address_of(account);
+        if (!coin::is_account_registered<DividendCoin>(account_addr)) {
+            coin::register<DividendCoin>(account);
+        };
+        coin::deposit<DividendCoin>(account_addr, dividend);
+    }
+
+    /// Claim up to 10 dividend coins in 1 tx
+    /// T0 ~ T9 are dividend coin types. Can be `NullDividend` if not present
+    public entry fun claim_composed_multi<LockCoinA, LockCoinB, T0, T1, T2, T3, T4, T5, T6, T7, T8, T9>(account: &signer) {
+        if (!is_null<T0>()) {
+            claim_composed<LockCoinA, LockCoinB, T0>(account);
+        };
+        if (!is_null<T1>()) {
+            claim_composed<LockCoinA, LockCoinB, T1>(account);
+        };
+        if (!is_null<T2>()) {
+            claim_composed<LockCoinA, LockCoinB, T2>(account);
+        };
+        if (!is_null<T3>()) {
+            claim_composed<LockCoinA, LockCoinB, T3>(account);
+        };
+        if (!is_null<T4>()) {
+            claim_composed<LockCoinA, LockCoinB, T4>(account);
+        };
+        if (!is_null<T5>()) {
+            claim_composed<LockCoinA, LockCoinB, T5>(account);
+        };
+        if (!is_null<T6>()) {
+            claim_composed<LockCoinA, LockCoinB, T6>(account);
+        };
+        if (!is_null<T7>()) {
+            claim_composed<LockCoinA, LockCoinB, T7>(account);
+        };
+        if (!is_null<T8>()) {
+            claim_composed<LockCoinA, LockCoinB, T8>(account);
+        };
+        if (!is_null<T9>()) {
+            claim_composed<LockCoinA, LockCoinB, T9>(account);
+        };
+    }
+    
+    fun is_null<CoinType>(): bool {
+        type_info::type_of<CoinType>() == type_info::type_of<NullDividend>()
     }
 }
