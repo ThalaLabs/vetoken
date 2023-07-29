@@ -33,18 +33,14 @@ module vetoken::dividend_distributor {
         /// Therefore the next claim should be records[18]
         next_claimable: smart_table::SmartTable<address, u64>,
 
-        events: DividendDistributorEvents<LockCoin, DividendCoin>
+        distribute_dividend_events: EventHandle<DistributeDividendEvent<LockCoin, DividendCoin>>,
+        claim_dividend_events: EventHandle<ClaimDividendEvent<LockCoin, DividendCoin>>
     }
 
     struct EpochDividend has store {
         epoch: u64,
         /// Accumulated dividend amount in this epoch
         dividend_amount: u64,
-    }
-
-    struct DividendDistributorEvents<phantom LockCoin, phantom DividendCoin> has store {
-        distribute_dividend_events: EventHandle<DistributeDividendEvent<LockCoin, DividendCoin>>,
-        claim_dividend_events: EventHandle<ClaimDividendEvent<LockCoin, DividendCoin>>
     }
 
     struct DistributeDividendEvent<phantom LockCoin, phantom DividendCoin> has drop, store {
@@ -70,12 +66,10 @@ module vetoken::dividend_distributor {
             dividend: coin::zero(),
             epoch_dividend: smart_vector::empty(),
             next_claimable: smart_table::new(),
-            events: DividendDistributorEvents<LockCoin, DividendCoin> {
-                distribute_dividend_events: account::new_event_handle<DistributeDividendEvent<LockCoin, DividendCoin>>(
-                    account
-                ),
-                claim_dividend_events: account::new_event_handle<ClaimDividendEvent<LockCoin, DividendCoin>>(account)
-            }
+            distribute_dividend_events: account::new_event_handle<DistributeDividendEvent<LockCoin, DividendCoin>>(
+                account
+            ),
+            claim_dividend_events: account::new_event_handle<ClaimDividendEvent<LockCoin, DividendCoin>>(account)
         });
     }
 
@@ -103,7 +97,7 @@ module vetoken::dividend_distributor {
         };
 
         event::emit_event<DistributeDividendEvent<LockCoin, DividendCoin>>(
-            &mut distributor.events.distribute_dividend_events,
+            &mut distributor.distribute_dividend_events,
             DistributeDividendEvent {
                 epoch,
                 distributed_amount: dividend_amount,
@@ -123,7 +117,7 @@ module vetoken::dividend_distributor {
         ));
 
         event::emit_event<ClaimDividendEvent<LockCoin, DividendCoin>>(
-            &mut distributor.events.claim_dividend_events,
+            &mut distributor.claim_dividend_events,
             ClaimDividendEvent {
                 account_addr,
                 epoch_until: smart_vector::borrow(&distributor.epoch_dividend, smart_vector::length(&distributor.epoch_dividend
