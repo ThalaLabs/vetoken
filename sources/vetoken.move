@@ -174,74 +174,52 @@ module vetoken::vetoken {
 
     /// Extend the period in which the `VeToken` remains locked
     public entry fun increase_lock_duration<CoinType>(account: &signer, increment_epochs: u64) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
-        assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
-
-        let account_addr = signer::address_of(account);
-        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
-        assert!(increment_epochs >= 1, ERR_VETOKEN_INVALID_LOCK_DURATION);
-
-        let now_epoch = now_epoch<CoinType>();
-        let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
-        assert!(now_epoch < vetoken_store.vetoken.unlockable_epoch, ERR_VETOKEN_NOT_LOCKED);
-
-        let new_unlockable_epoch = vetoken_store.vetoken.unlockable_epoch + increment_epochs;
-        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
-        assert!(new_unlockable_epoch - now_epoch <= vetoken_info.max_locked_epochs, ERR_VETOKEN_INVALID_LOCK_DURATION);
-
-        let locked_amount = (coin::value(&vetoken_store.vetoken.locked) as u128);
-
-        // Update the supply & delegate balance for the epochs this VeToken is locked
-        let epoch = now_epoch;
-        let delegate = vetoken_store.delegate_to;
-        let delegate_store = borrow_global_mut<VeTokenDelegations<CoinType>>(delegate);
-        while (epoch < new_unlockable_epoch) {
-            // For epochs the token was already locked prior, an extra `increment_epochs` factor of `locked_amount`
-            // is added. For the new epochs, the supply is updated as normal (epochs left till unlock)
-            let strength_factor = if (epoch < vetoken_store.vetoken.unlockable_epoch) increment_epochs else new_unlockable_epoch - epoch;
-            let unnormalized_added_balance = locked_amount * (strength_factor as u128);
-
-            let total_supply = smart_table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
-            *total_supply = *total_supply + unnormalized_added_balance;
-
-            // this will work in both scenarios where balance is added (epoch < old_unlockable_epoch) and new epochs given the 0 default
-            let balance = smart_table::borrow_mut_with_default(&mut vetoken_store.unnormalized_balance, epoch, 0);
-            *balance = *balance + unnormalized_added_balance;
-
-            let delegate_balance = smart_table::borrow_mut_with_default(&mut delegate_store.unnormalized_delegation_balance, epoch, 0);
-            *delegate_balance = *delegate_balance + unnormalized_added_balance;
-
-            epoch = epoch + 1;
-        };
-
-        // Update the VeToken
-        vetoken_store.vetoken.unlockable_epoch = new_unlockable_epoch;
+        increase_lock_amount_and_duration(account, coin::zero<CoinType>(), increment_epochs);
     }
 
     /// Extend how much `CoinType` is locked within `VeToken`.
     public fun increase_lock_amount<CoinType>(account: &signer, coin: Coin<CoinType>) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+        increase_lock_amount_and_duration(account, coin, 0);
+    }
+
+    /// Extend both the amount of `CoinType` locked within `VeToken` as well as the lock duration.
+    public fun increase_lock_amount_and_duration<CoinType>(account: &signer, coin: Coin<CoinType>, increment_epochs: u64) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
         assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
 
         let account_addr = signer::address_of(account);
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
-        let amount = (coin::value(&coin) as u128);
-        assert!(amount > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
+        let added_amount = (coin::value(&coin) as u128);
+        if (increment_epochs == 0) assert!(added_amount > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
+        if (added_amount == 0) assert!(increment_epochs > 0, ERR_VETOKEN_INVALID_LOCK_DURATION);
 
         let now_epoch = now_epoch<CoinType>();
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
         assert!(now_epoch < vetoken_store.vetoken.unlockable_epoch, ERR_VETOKEN_NOT_LOCKED);
+
+        let locked_amount = (coin::value(&vetoken_store.vetoken.locked) as u128);
+
+        let old_unlockable_epoch = vetoken_store.vetoken.unlockable_epoch;
+        let new_unlockable_epoch = vetoken_store.vetoken.unlockable_epoch + increment_epochs;
+        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
+        assert!(new_unlockable_epoch - now_epoch <= vetoken_info.max_locked_epochs, ERR_VETOKEN_INVALID_LOCK_DURATION);
 
         // Update the supply for the applicable epochs.
         let epoch = now_epoch;
         let delegate = vetoken_store.delegate_to;
         let delegate_store = borrow_global_mut<VeTokenDelegations<CoinType>>(delegate);
-        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
-        while (epoch < vetoken_store.vetoken.unlockable_epoch) {
-            let epochs_till_unlock = (vetoken_store.vetoken.unlockable_epoch - epoch as u128);
-            let unnormalized_added_balance = amount * epochs_till_unlock;
+        while (epoch < new_unlockable_epoch) {
+            let epochs_till_unlock = (new_unlockable_epoch - epoch as u128);
 
-            let total_supply = smart_table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
-            *total_supply = *total_supply + unnormalized_added_balance;
+            // For epochs the token was already locked prior, an extra `increment_epochs` factor of `locked_amount`
+            // is added. For the new epochs or added amounts, the supply is updated as normal (epochs left till unlock)
+            let unnormalized_added_balance = {
+                if (epoch < old_unlockable_epoch) {
+                    (locked_amount * (increment_epochs as u128)) + (added_amount * epochs_till_unlock)
+                } else {
+                    (locked_amount + added_amount) * epochs_till_unlock
+                }
+            };
 
             let balance = smart_table::borrow_mut_with_default(&mut vetoken_store.unnormalized_balance, epoch, 0);
             *balance = *balance + unnormalized_added_balance;
@@ -249,10 +227,13 @@ module vetoken::vetoken {
             let delegate_balance = smart_table::borrow_mut_with_default(&mut delegate_store.unnormalized_delegation_balance, epoch, 0);
             *delegate_balance = *delegate_balance + unnormalized_added_balance;
 
+            let total_supply = smart_table::borrow_mut_with_default(&mut vetoken_info.unnormalized_total_supply, epoch, 0);
+            *total_supply = *total_supply + unnormalized_added_balance;
+
             epoch = epoch + 1;
         };
 
-        // Update the VeToken
+        vetoken_store.vetoken.unlockable_epoch = new_unlockable_epoch;
         coin::merge(&mut vetoken_store.vetoken.locked, coin);
     }
 
@@ -581,16 +562,16 @@ module vetoken::vetoken {
 
         // lock
         lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
-        assert!(balance<FakeCoin>(signer::address_of(u1)) == 2000 / 5, 0);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == 1000 * 2 / 5, 0);
 
         // extend 2 epochs
         increase_lock_duration<FakeCoin>(u1, 2);
-        assert!(balance<FakeCoin>(signer::address_of(u1)) == 4000 / 5, 0);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == 1000 * 4 / 5, 0);
 
         // 3 epochs later, extend 3 more epochs
         timestamp::fast_forward_seconds(3 * seconds_in_epoch<FakeCoin>());
         increase_lock_duration<FakeCoin>(u1, 3);
-        assert!(balance<FakeCoin>(signer::address_of(u1)) == 4000 / 5, 0);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == 1000 * 4 / 5, 0);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
@@ -602,16 +583,32 @@ module vetoken::vetoken {
 
         // lock
         lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
-        assert!(balance<FakeCoin>(signer::address_of(u1)) == 2000 / 5, 0);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == 1000 * 2 / 5, 0);
 
         // increase lock amount
         increase_lock_amount<FakeCoin>(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000));
-        assert!(balance<FakeCoin>(signer::address_of(u1)) == 4000 / 5, 0);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == 2000 * 2 / 5, 0);
 
         // 1 epochs later, further increase lock amount
         timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
         increase_lock_amount<FakeCoin>(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000));
-        assert!(balance<FakeCoin>(signer::address_of(u1)) == 3000 / 5, 0);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == 3000 * 1 / 5, 0); // 1 epoch left till unlock
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    fun increase_lock_amount_and_duration_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+        initialize_for_test(aptos_framework, vetoken, 1, 5);
+
+        let u1 = &account::create_account_for_test(@0xA);
+        register<FakeCoin>(u1);
+
+        // lock
+        lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == 1000 * 2 / 5, 0);
+
+        // double the amount and duration
+        increase_lock_amount_and_duration<FakeCoin>(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 1);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == 2000 * 3 / 5, 0);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
