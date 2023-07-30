@@ -162,7 +162,7 @@ module vetoken::dividend_distributor {
 
     /// Returns (claimable amount, next claimable index)
     /// Claimable dividend as a VeToken<LockCoin> holder.
-    /// Only past epochs are claimable, this is b/c holder's weight in the current epoch subjects to changes
+    /// Only past epochs are claimable, this is b/c holder's multipliers in the current epoch subjects to changes
     /// through increase_lock_duration or increase_lock_amount.
     fun claimable_internal<LockCoin, DividendCoin>(account_addr: address): (u64, u64) acquires DividendDistributor {
         let total_claimable = 0;
