@@ -18,12 +18,16 @@ module vetoken::scripts {
 
     public entry fun unlock<CoinType>(account: &signer) {
         let coin = vetoken::unlock<CoinType>(account);
-        coin::deposit<CoinType>(signer::address_of(account), coin);
+        coin::deposit(signer::address_of(account), coin);
     }
 
     public entry fun increase_lock_amount<CoinType>(account: &signer, amount: u64) {
+        increase_lock_amount_and_duration<CoinType>(account, amount, 0);
+    }
+
+    public entry fun increase_lock_amount_and_duration<CoinType>(account: &signer, amount: u64, increment_epochs: u64) {
         let coin = coin::withdraw<CoinType>(account, amount);
-        vetoken::increase_lock_amount<CoinType>(account, coin);
+        vetoken::increase_lock_amount_and_duration(account, coin, increment_epochs);
     }
 
     public entry fun claim<LockCoin, DividendCoin>(account: &signer) {
