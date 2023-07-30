@@ -54,7 +54,7 @@ module vetoken::dividend_distributor {
 
     struct ClaimDividendEvent<phantom LockCoin, phantom DividendCoin> has drop, store {
         account_addr: address,
-        /// The event is emitted when the user has claimed dividend up to (excluding) this epoch
+        /// The event is emitted when the user has claimed dividend up to (including) this epoch
         epoch_until: u64,
         claimed_amount: u64,
     }
@@ -115,19 +115,21 @@ module vetoken::dividend_distributor {
     public fun claim<LockCoin, DividendCoin>(account: &signer): Coin<DividendCoin> acquires DividendDistributor {
         assert!(initialized<LockCoin, DividendCoin>(), ERR_DIVIDEND_DISTRIBUTOR_UNINITIALIZED);
 
-        let claimable = claimable<LockCoin, DividendCoin>(account);
-
         let account_addr = signer::address_of(account);
-        let distributor = borrow_global_mut<DividendDistributor<LockCoin, DividendCoin>>(account_address<LockCoin>());
-        smart_table::upsert(&mut distributor.next_claimable, account_addr, smart_vector::length(&distributor.epoch_dividend
-        ));
+        let (claimable, next_claimable_index) = claimable_internal<LockCoin, DividendCoin>(account_addr);
 
+        // there's no dividend distributed yet
+        if (next_claimable_index == 0) {
+            return coin::zero()
+        };
+
+        let distributor = borrow_global_mut<DividendDistributor<LockCoin, DividendCoin>>(account_address<LockCoin>());
+        smart_table::upsert(&mut distributor.next_claimable, account_addr, next_claimable_index);
         event::emit_event<ClaimDividendEvent<LockCoin, DividendCoin>>(
             &mut distributor.events.claim_dividend_events,
             ClaimDividendEvent {
                 account_addr,
-                epoch_until: smart_vector::borrow(&distributor.epoch_dividend, smart_vector::length(&distributor.epoch_dividend
-                ) - 1).epoch,
+                epoch_until: smart_vector::borrow(&distributor.epoch_dividend, next_claimable_index - 1).epoch,
                 claimed_amount: claimable
             }
         );
@@ -142,10 +144,21 @@ module vetoken::dividend_distributor {
 
     #[view]
     /// Claimable dividend as a VeToken<LockCoin> holder.
+    public fun claimable<LockCoin, DividendCoin>(account: &signer): u64 acquires DividendDistributor {
+        let (total_claimable, _) = claimable_internal<LockCoin, DividendCoin>(signer::address_of(account));
+        total_claimable
+    }
+
+    fun account_address<Type>(): address {
+        let type_info = type_info::type_of<Type>();
+        type_info::account_address(&type_info)
+    }
+
+    /// Returns (claimable amount, next claimable index)
+    /// Claimable dividend as a VeToken<LockCoin> holder.
     /// Only past epochs are claimable, this is b/c holder's weight in the current epoch subjects to changes
     /// through increase_lock_duration or increase_lock_amount.
-    public fun claimable<LockCoin, DividendCoin>(account: &signer): u64 acquires DividendDistributor {
-        let account_addr = signer::address_of(account);
+    fun claimable_internal<LockCoin, DividendCoin>(account_addr: address): (u64, u64) acquires DividendDistributor {
         let total_claimable = 0;
         let distributor = borrow_global<DividendDistributor<LockCoin, DividendCoin>>(account_address<LockCoin>());
         let now_epoch = now_epoch<LockCoin>();
@@ -170,12 +183,8 @@ module vetoken::dividend_distributor {
 
             i = i + 1;
         };
-        total_claimable
-    }
 
-    fun account_address<Type>(): address {
-        let type_info = type_info::type_of<Type>();
-        type_info::account_address(&type_info)
+        (total_claimable, i)
     }
 
     #[test_only]
@@ -195,7 +204,7 @@ module vetoken::dividend_distributor {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun past_epochs_claimable(aptos_framework: &signer, vetoken: &signer) acquires DividendDistributor {
+    fun claim_past_epoch_dividend_ok(aptos_framework: &signer, vetoken: &signer) acquires DividendDistributor {
         initialize_for_test(aptos_framework, vetoken, 1, 52);
 
         let user = &account::create_account_for_test(@0xA);
@@ -210,6 +219,33 @@ module vetoken::dividend_distributor {
         // can claim dividend distributed in the past epochs
         timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeLockCoin>());
         assert!(claimable<FakeLockCoin, FakeDividendCoin>(user) == 100000000, 0);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    fun claim_current_epoch_dividend_ok(aptos_framework: &signer, vetoken: &signer) acquires DividendDistributor {
+        initialize_for_test(aptos_framework, vetoken, 1, 52);
+
+        let user = &account::create_account_for_test(@0xA);
+        vetoken::register<FakeLockCoin>(user);
+        vetoken::lock(user, coin_test::mint_coin<FakeLockCoin>(vetoken, 10000), 52);
+
+        distribute<FakeLockCoin, FakeDividendCoin>(coin_test::mint_coin<FakeDividendCoin>(vetoken, 100000000));
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xA) == 0, 0);
+        let dividend = claim<FakeLockCoin, FakeDividendCoin>(user);
+        assert!(coin::value(&dividend) == 0, 0);
+        coin_test::burn_coin(vetoken, dividend);
+
+        timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeLockCoin>());
+        distribute<FakeLockCoin, FakeDividendCoin>(coin_test::mint_coin<FakeDividendCoin>(vetoken, 200000000));
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xA) == 100000000, 0);
+        let dividend = claim<FakeLockCoin, FakeDividendCoin>(user);
+        assert!(coin::value(&dividend) == 100000000, 0);
+        coin_test::burn_coin(vetoken, dividend);
+
+        timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeLockCoin>());
+        let dividend = claim<FakeLockCoin, FakeDividendCoin>(user);
+        assert!(coin::value(&dividend) == 200000000, 0);
+        coin_test::burn_coin(vetoken, dividend);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
