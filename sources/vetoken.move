@@ -22,6 +22,7 @@ module vetoken::vetoken {
     const ERR_VETOKEN_INVALID_EPOCH_DURATION: u64 = 6;
     const ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH: u64 = 7;
     const ERR_VETOKEN_INVALID_PAST_EPOCH: u64 = 8;
+    const ERR_VETOKEN_INVALID_LOCK_INCREASE: u64 = 9;
 
     // Delegation Errors
     const ERR_VETOKEN_DELEGATE_UNREGISTERED: u64 = 50;
@@ -174,11 +175,13 @@ module vetoken::vetoken {
 
     /// Extend the period in which the `VeToken` remains locked
     public entry fun increase_lock_duration<CoinType>(account: &signer, increment_epochs: u64) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+        assert!(increment_epochs > 0, ERR_VETOKEN_INVALID_LOCK_DURATION);
         increase_lock_amount_and_duration(account, coin::zero<CoinType>(), increment_epochs);
     }
 
     /// Extend how much `CoinType` is locked within `VeToken`.
     public fun increase_lock_amount<CoinType>(account: &signer, coin: Coin<CoinType>) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+        assert!(coin::value(&coin) > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
         increase_lock_amount_and_duration(account, coin, 0);
     }
 
@@ -190,8 +193,7 @@ module vetoken::vetoken {
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
         let added_amount = (coin::value(&coin) as u128);
-        if (increment_epochs == 0) assert!(added_amount > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
-        if (added_amount == 0) assert!(increment_epochs > 0, ERR_VETOKEN_INVALID_LOCK_DURATION);
+        assert!(added_amount > 0 || increment_epochs > 0, ERR_VETOKEN_INVALID_LOCK_INCREASE);
 
         let now_epoch = now_epoch<CoinType>();
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
@@ -575,6 +577,22 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    #[expected_failure(abort_code = ERR_VETOKEN_INVALID_LOCK_DURATION)]
+    fun increase_lock_duration_invalid_lock_duration_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+        initialize_for_test(aptos_framework, vetoken, 1, 5);
+
+        let u1 = &account::create_account_for_test(@0xA);
+        register<FakeCoin>(u1);
+
+        // lock
+        lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == 1000 * 2 / 5, 0);
+
+        // invalid
+        increase_lock_duration<FakeCoin>(u1, 0);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
     fun increase_lock_amount_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
         initialize_for_test(aptos_framework, vetoken, 1, 5);
 
@@ -596,6 +614,22 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    #[expected_failure(abort_code = ERR_VETOKEN_ZERO_LOCK_AMOUNT)]
+    fun increase_lock_amount_zero_amount_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+        initialize_for_test(aptos_framework, vetoken, 1, 5);
+
+        let u1 = &account::create_account_for_test(@0xA);
+        register<FakeCoin>(u1);
+
+        // lock
+        lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == 1000 * 2 / 5, 0);
+
+        // invalid
+        increase_lock_amount<FakeCoin>(u1, coin::zero<FakeCoin>());
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
     fun increase_lock_amount_and_duration_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
         initialize_for_test(aptos_framework, vetoken, 1, 5);
 
@@ -609,6 +643,22 @@ module vetoken::vetoken {
         // double the amount and duration
         increase_lock_amount_and_duration<FakeCoin>(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 1);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 2000 * 3 / 5, 0);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    #[expected_failure(abort_code = ERR_VETOKEN_INVALID_LOCK_INCREASE)]
+    fun increase_lock_amount_and_duration_invalid_increase_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+        initialize_for_test(aptos_framework, vetoken, 1, 5);
+
+        let u1 = &account::create_account_for_test(@0xA);
+        register<FakeCoin>(u1);
+
+        // lock
+        lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == 1000 * 2 / 5, 0);
+
+        // invalid
+        increase_lock_amount_and_duration<FakeCoin>(u1, coin::zero<FakeCoin>(), 0);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
