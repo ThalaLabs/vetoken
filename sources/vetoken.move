@@ -203,7 +203,7 @@ module vetoken::vetoken {
         let locked_amount = (coin::value(&vetoken_store.vetoken.locked) as u128);
 
         let old_unlockable_epoch = vetoken_store.vetoken.unlockable_epoch;
-        let new_unlockable_epoch = vetoken_store.vetoken.unlockable_epoch + increment_epochs;
+        let new_unlockable_epoch = old_unlockable_epoch + increment_epochs;
         let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
         assert!(new_unlockable_epoch - now_epoch <= vetoken_info.max_locked_epochs, ERR_VETOKEN_INVALID_LOCK_DURATION);
 
