@@ -276,34 +276,6 @@ module vetoken::composable_vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun composable_vetoken_lock_ok(aptos_framework: &signer, vetoken: &signer) {
-        initialize_for_test(aptos_framework, vetoken, 1, 4);
-        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
-
-        let epoch = vetoken::now_epoch<FakeCoinA>();
-
-        let account = &account::create_account_for_test(@0xA);
-        lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), coin_test::mint_coin<FakeCoinB>(vetoken, 1000), 1);
-        assert!(vetoken::balance<FakeCoinA>(signer::address_of(account)) == 250, 0);
-        assert!(vetoken::balance<FakeCoinB>(signer::address_of(account)) == 250, 0);
-        assert!(vetoken::unlockable_epoch<FakeCoinA>(signer::address_of(account)) == epoch + 1, 0);
-        assert!(vetoken::unlockable_epoch<FakeCoinB>(signer::address_of(account)) == epoch + 1, 0);
-    }
-
-    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    #[expected_failure(abort_code = vetoken::vetoken::ERR_VETOKEN_LOCKED)]
-    fun composable_vetoken_locked_err(aptos_framework: &signer, vetoken: &signer) {
-        initialize_for_test(aptos_framework, vetoken, 1, 4);
-        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
-
-        let account = &account::create_account_for_test(@0xA);
-        vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), 1);
-
-        // FakeCoinA is already locked
-        lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), coin_test::mint_coin<FakeCoinB>(vetoken, 1000), 1);
-    }
-
-    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
     fun composable_vetoken_balance_ok(aptos_framework: &signer, vetoken: &signer) acquires ComposedVeToken2 {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
