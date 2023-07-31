@@ -149,6 +149,13 @@ module vetoken::dividend_distributor {
         total_claimable
     }
 
+    #[view]
+    /// Claimable dividend as a VeToken<LockCoin> holder.
+    public fun claimable2<LockCoin, DividendCoin>(account_addr: address): u64 acquires DividendDistributor {
+        let (total_claimable, _) = claimable_internal<LockCoin, DividendCoin>(account_addr);
+        total_claimable
+    }
+
     fun account_address<Type>(): address {
         let type_info = type_info::type_of<Type>();
         type_info::account_address(&type_info)

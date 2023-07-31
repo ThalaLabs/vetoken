@@ -161,6 +161,12 @@ module vetoken::composable_vetoken {
         dividend_distributor::claimable<CoinTypeA, DividendCoin>(account) + dividend_distributor::claimable<CoinTypeB, DividendCoin>(account)
     }
 
+    #[view]
+    /// Return the total amount of `DividendCoin` claimable for two types of underlying VeToken
+    public fun claimable2<CoinTypeA, CoinTypeB, DividendCoin>(account_addr: address): u64 {
+        dividend_distributor::claimable2<CoinTypeA, DividendCoin>(account_addr) + dividend_distributor::claimable2<CoinTypeB, DividendCoin>(account_addr)
+    }
+
     #[view] /// Check if this coin pair has a `ComposedVeToken2<CoinTypeA, CoinTypeB>` configuration
     public fun initialized<CoinTypeA, CoinTypeB>(): bool {
         exists<ComposedVeToken2<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>())
