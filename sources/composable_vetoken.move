@@ -1,7 +1,6 @@
 module vetoken::composable_vetoken {
     use std::signer;
 
-    use aptos_framework::coin::Coin;
     use aptos_std::type_info;
 
     use vetoken::dividend_distributor;
@@ -67,14 +66,6 @@ module vetoken::composable_vetoken {
 
         composable_vetoken.weight_percent_coin_a = weight_percent_coin_a;
         composable_vetoken.weight_percent_coin_b = weight_percent_coin_b;
-    }
-
-    /// Lock two tokens for the `ComposedVeToken2` configuration.
-    public fun lock<CoinTypeA, CoinTypeB>(account: &signer, coin_a: Coin<CoinTypeA>, coin_b: Coin<CoinTypeB>, locked_epochs: u64) {
-        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
-
-        vetoken::lock(account, coin_a, locked_epochs);
-        vetoken::lock(account, coin_b, locked_epochs);
     }
 
     #[view] /// Query for the weight configuration
