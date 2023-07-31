@@ -109,12 +109,23 @@ module vetoken::composable_vetoken {
     #[view] /// Query for the ComposedVeToken2<CoinTypeA, CoinTypeB> balance of this account at a given epoch
     public fun past_balance<CoinTypeA, CoinTypeB>(account_addr: address, epoch: u64): u128 acquires ComposedVeToken2 {
         assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
+        
 
         // VeToken<CoinTypeA> Component
-        let balance_a = (vetoken::past_balance<CoinTypeA>(account_addr, epoch) as u128);
+        let balance_a = if (vetoken::is_account_registered<CoinTypeA>(account_addr)) {
+            (vetoken::past_balance<CoinTypeA>(account_addr, epoch) as u128)
+        }
+        else {
+            0
+        };
 
         // VeToken<CoinTypeB> Component
-        let balance_b = (vetoken::past_balance<CoinTypeB>(account_addr, epoch) as u128);
+        let balance_b = if (vetoken::is_account_registered<CoinTypeB>(account_addr)) {
+            (vetoken::past_balance<CoinTypeB>(account_addr, epoch) as u128)
+        }
+        else {
+            0
+        };
 
         // Apply Multipliers
         let (weight_percent_coin_a, weight_percent_coin_b) = weight_percents<CoinTypeA, CoinTypeB>();
