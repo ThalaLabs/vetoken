@@ -401,7 +401,9 @@ module vetoken::vetoken {
 
     #[view]
     public fun can_unlock<CoinType>(account_addr: address): bool acquires VeTokenInfo, VeTokenStore {
-        locked_coin_amount<CoinType>(account_addr) > 0 && now_epoch<CoinType>() >= unlockable_epoch<CoinType>(account_addr)
+        if (locked_coin_amount<CoinType>(account_addr) == 0) return false;
+        let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);
+        vetoken_store.vetoken.unlockable_epoch <= now_epoch<CoinType>()
     }
 
     #[view]

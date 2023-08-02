@@ -1,5 +1,6 @@
 module vetoken::composable_vetoken {
     use std::signer;
+    use aptos_framework::coin::{Self, Coin};
 
     use aptos_std::type_info;
 
@@ -30,6 +31,14 @@ module vetoken::composable_vetoken {
         weight_percent_coin_a: u128,
         weight_percent_coin_b: u128,
         mutable_weights: bool
+    }
+
+    /// Warning: not exist in main
+    /// Lock two tokens for the `ComposedVeToken2` configuration.	
+    public fun lock<CoinTypeA, CoinTypeB>(account: &signer, coin_a: Coin<CoinTypeA>, coin_b: Coin<CoinTypeB>, locked_epochs: u64) {	
+        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);	
+        if (coin::value(&coin_a) > 0) vetoken::lock(account, coin_a, locked_epochs) else coin::destroy_zero(coin_a);	
+        if (coin::value(&coin_b) > 0) vetoken::lock(account, coin_b, locked_epochs) else coin::destroy_zero(coin_b);	
     }
 
     /// Create a ComposedVeToken2 over `CoinTypeA` and `CoinTypeB`. Only `CoinTypeA` is allowed to instantiate
