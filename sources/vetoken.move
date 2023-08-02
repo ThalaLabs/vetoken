@@ -23,6 +23,7 @@ module vetoken::vetoken {
     const ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH: u64 = 7;
     const ERR_VETOKEN_INVALID_PAST_EPOCH: u64 = 8;
     const ERR_VETOKEN_INVALID_LOCK_INCREASE: u64 = 9;
+    const ERR_VETOKEN_CANNOT_UNLOCK: u64 = 10;
 
     // Delegation Errors
     const ERR_VETOKEN_DELEGATE_UNREGISTERED: u64 = 50;
@@ -245,11 +246,9 @@ module vetoken::vetoken {
         let account_addr = signer::address_of(account);
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
-        let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
-        assert!(coin::value(&vetoken_store.vetoken.locked) > 0, ERR_VETOKEN_NOT_LOCKED);
+        assert!(can_unlock<CoinType>(account_addr), ERR_VETOKEN_CANNOT_UNLOCK);
 
-        let now_epoch = now_epoch<CoinType>();
-        assert!(now_epoch >= vetoken_store.vetoken.unlockable_epoch, ERR_VETOKEN_LOCKED);
+        let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
 
         // Update the VeToken
         vetoken_store.vetoken.unlockable_epoch = 0;
@@ -391,6 +390,18 @@ module vetoken::vetoken {
         let unnormalized = unnormalized_past_delegated_balance<CoinType>(account_addr, epoch);
         let max_locked_epochs = (max_locked_epochs<CoinType>() as u128);
         unnormalized / max_locked_epochs
+    }
+
+    #[view]
+    public fun locked_coin_amount<CoinType>(account_addr: address): u64 acquires VeTokenStore {
+        if (!is_account_registered<CoinType>(account_addr)) return 0;
+        let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);
+        coin::value(&vetoken_store.vetoken.locked)
+    }
+
+    #[view]
+    public fun can_unlock<CoinType>(account_addr: address): bool acquires VeTokenInfo, VeTokenStore {
+        locked_coin_amount<CoinType>(account_addr) > 0 && now_epoch<CoinType>() >= unlockable_epoch<CoinType>(account_addr)
     }
 
     #[view]
@@ -540,7 +551,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    #[expected_failure(abort_code = ERR_VETOKEN_LOCKED)]
+    #[expected_failure(abort_code = ERR_VETOKEN_CANNOT_UNLOCK)]
     fun early_unlock_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
         initialize_for_test(aptos_framework, vetoken, 1, 52);
 
