@@ -10,16 +10,21 @@ module vetoken::dividend_distributor {
     use aptos_framework::account;
     use aptos_framework::coin::{Self, Coin};
     use aptos_framework::event::{Self, EventHandle};
+
+    use vetoken::vetoken;
+
+    #[test_only]
     use aptos_framework::timestamp;
-
-    use vetoken::vetoken::{Self, now_epoch, seconds_to_epoch};
-
     #[test_only]
     use vetoken::coin_test;
 
     const ERR_DIVIDEND_DISTRIBUTOR_UNAUTHORIZED: u64 = 0;
     const ERR_DIVIDEND_DISTRIBUTOR_UNINITIALIZED: u64 = 1;
     const ERR_DIVIDEND_DISTRIBUTOR_ALREADY_INITIALIZED: u64 = 2;
+
+    /// Throw this error when the last epoch dividend is later than the current epoch.
+    /// This should not happen unless there is an internal logic error. We use it for sanity check
+    const ERR_DIVIDEND_DISTRIBUTOR_INVALID_EPOCH_DIVIDEND: u64 = 3;
 
     struct DividendDistributor<phantom LockCoin, phantom DividendCoin> has key {
         /// Total claimable dividend
@@ -81,25 +86,32 @@ module vetoken::dividend_distributor {
         let dividend_amount = coin::value(&dividend);
         coin::merge(&mut distributor.dividend, dividend);
 
-        let epoch = seconds_to_epoch<LockCoin>(timestamp::now_seconds());
+        let now_epoch = vetoken::now_epoch<LockCoin>();
         let length = smart_vector::length(&distributor.epoch_dividend);
 
-        // if last record is in the same epoch, merge the dividend amount
-        // otherwise, push a new record
-        if (length == 0 || smart_vector::borrow(&distributor.epoch_dividend, length - 1).epoch != epoch) {
+        if (length == 0) {
             smart_vector::push_back(&mut distributor.epoch_dividend, EpochDividend {
-                epoch,
+                epoch: now_epoch,
                 dividend_amount
             });
         } else {
-            let epoch_dividend = &mut smart_vector::borrow_mut(&mut distributor.epoch_dividend, length - 1).dividend_amount;
-            *epoch_dividend = *epoch_dividend + dividend_amount;
+            let last_epoch_dividend = smart_vector::borrow_mut(&mut distributor.epoch_dividend, length - 1);
+            if (last_epoch_dividend.epoch > now_epoch) {
+                abort ERR_DIVIDEND_DISTRIBUTOR_INVALID_EPOCH_DIVIDEND
+            } else if (last_epoch_dividend.epoch == now_epoch) {
+                last_epoch_dividend.dividend_amount = last_epoch_dividend.dividend_amount + dividend_amount;
+            } else {
+                smart_vector::push_back(&mut distributor.epoch_dividend, EpochDividend {
+                    epoch: now_epoch,
+                    dividend_amount
+                });
+            }
         };
 
         event::emit_event<DistributeDividendEvent<LockCoin, DividendCoin>>(
             &mut distributor.distribute_dividend_events,
             DistributeDividendEvent {
-                epoch,
+                epoch: now_epoch,
                 distributed_amount: dividend_amount,
             }
         );
@@ -155,7 +167,7 @@ module vetoken::dividend_distributor {
     fun claimable_internal<LockCoin, DividendCoin>(account_addr: address): (u64, u64) acquires DividendDistributor {
         let total_claimable = 0;
         let distributor = borrow_global<DividendDistributor<LockCoin, DividendCoin>>(account_address<LockCoin>());
-        let now_epoch = now_epoch<LockCoin>();
+        let now_epoch = vetoken::now_epoch<LockCoin>();
 
         let i = *smart_table::borrow_with_default(&distributor.next_claimable, account_addr, &0);
         let n = smart_vector::length(&distributor.epoch_dividend);
