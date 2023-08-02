@@ -44,8 +44,13 @@ module vetoken::scripts {
     }
     
     public entry fun increase_lock_amount_and_duration_composed<LockCoinA, LockCoinB>(account: &signer, amount_a: u64, amount_b: u64, increment_epochs: u64) {
-        increase_lock_amount_and_duration<LockCoinA>(account, amount_a, increment_epochs);
-        increase_lock_amount_and_duration<LockCoinB>(account, amount_b, increment_epochs);
+        let account_addr = signer::address_of(account);
+        if (coin::is_account_registered<LockCoinA>(account_addr)) {
+            increase_lock_amount_and_duration<LockCoinA>(account, amount_a, increment_epochs);
+        };
+        if (coin::is_account_registered<LockCoinB>(account_addr)) {
+            increase_lock_amount_and_duration<LockCoinB>(account, amount_b, increment_epochs);
+        };
     }
 
     public entry fun unlock_composed<LockCoinA, LockCoinB>(account: &signer) {
