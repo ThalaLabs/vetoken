@@ -237,14 +237,14 @@ module vetoken::dividend_distributor {
         vetoken::lock(user, coin_test::mint_coin<FakeLockCoin>(vetoken, 10000), 52);
 
         distribute<FakeLockCoin, FakeDividendCoin>(coin_test::mint_coin<FakeDividendCoin>(vetoken, 100000000));
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xA) == 0, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(user) == 0, 0);
         let dividend = claim<FakeLockCoin, FakeDividendCoin>(user);
         assert!(coin::value(&dividend) == 0, 0);
         coin_test::burn_coin(vetoken, dividend);
 
         timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeLockCoin>());
         distribute<FakeLockCoin, FakeDividendCoin>(coin_test::mint_coin<FakeDividendCoin>(vetoken, 200000000));
-        assert!(claimable<FakeLockCoin, FakeDividendCoin>(@0xA) == 100000000, 0);
+        assert!(claimable<FakeLockCoin, FakeDividendCoin>(user) == 100000000, 0);
         let dividend = claim<FakeLockCoin, FakeDividendCoin>(user);
         assert!(coin::value(&dividend) == 100000000, 0);
         coin_test::burn_coin(vetoken, dividend);
