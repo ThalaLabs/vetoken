@@ -91,6 +91,20 @@ module vetoken::scripts {
         };
     }
 
+    /// If existing locked position is unlockable, use this function to unlock and then lock again
+    /// Warning: This function assumes both tokens have the same lock duration. It may fail if this is not true.
+    public entry fun relock_composed<LockCoinA, LockCoinB>(account: &signer, epochs: u64) {
+        let account_addr = signer::address_of(account);
+        if (vetoken::can_unlock<LockCoinA>(account_addr)) {
+            let unlocked_coin = vetoken::unlock<LockCoinA>(account);
+            vetoken::lock(account, unlocked_coin, epochs);
+        };
+        if (vetoken::can_unlock<LockCoinB>(account_addr)) {
+            let unlocked_coin = vetoken::unlock<LockCoinB>(account);
+            vetoken::lock(account, unlocked_coin, epochs);
+        };
+    }
+
     public entry fun claim_composed<LockCoinA, LockCoinB, DividendCoin>(account: &signer) {
         let dividend = dividend_distributor::claim<LockCoinA, DividendCoin>(account);
         coin::merge(&mut dividend, dividend_distributor::claim<LockCoinB, DividendCoin>(account));
@@ -218,5 +232,43 @@ module vetoken::scripts {
         assert!(vetoken::locked_coin_amount<FakeCoinB>(@0xB) == 1500, 0); // existing 1000 + new 500
         assert!(vetoken::unlockable_epoch<FakeCoinA>(@0xB) == 4, 0);
         assert!(vetoken::unlockable_epoch<FakeCoinB>(@0xB) == 4, 0);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    fun relock_composed_with_existing_both_tokens_ok(aptos_framework: &signer, vetoken: &signer) {
+        initialize_for_test(aptos_framework, vetoken, 1, 4);
+
+        // lock the same amount and duration for both coins
+        let account = &account::create_account_for_test(@0xA);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), 2);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinB>(vetoken, 500), 2);
+
+        // relock after unlockable epoch 2
+        timestamp::fast_forward_seconds(SECONDS_IN_WEEK * 2);
+        relock_composed<FakeCoinA, FakeCoinB>(account, 3);
+        
+        // amount and duration should be correct
+        assert!(vetoken::locked_coin_amount<FakeCoinA>(@0xA) == 1000, 0);
+        assert!(vetoken::locked_coin_amount<FakeCoinB>(@0xA) == 500, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinA>(@0xA) == 5, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinB>(@0xA) == 5, 0);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    fun relock_composed_with_existing_one_token_ok(aptos_framework: &signer, vetoken: &signer) {
+        initialize_for_test(aptos_framework, vetoken, 1, 4);
+
+        // lock for coin A only
+        let account = &account::create_account_for_test(@0xA);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), 2);
+
+        // relock after unlockable epoch 2
+        timestamp::fast_forward_seconds(SECONDS_IN_WEEK * 2);
+        relock_composed<FakeCoinA, FakeCoinB>(account, 3);
+        
+        // amount and duration should be correct
+        assert!(vetoken::locked_coin_amount<FakeCoinA>(@0xA) == 1000, 0);
+        assert!(vetoken::locked_coin_amount<FakeCoinB>(@0xA) == 0, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinA>(@0xA) == 5, 0);
     }
 }
