@@ -59,7 +59,9 @@ module vetoken::scripts {
 
         // Handle LockCoinA
         if (registered_a) {
-            increase_lock_amount_and_duration<LockCoinA>(account, amount_a, increment_epochs);
+            if (amount_a > 0 || increment_epochs > 0) {
+                increase_lock_amount_and_duration<LockCoinA>(account, amount_a, increment_epochs);
+            };
         }
         else if (registered_b && amount_a > 0) {
             // A not locked, B is locked, create a new lock for A with the same duration as B
@@ -68,7 +70,9 @@ module vetoken::scripts {
 
         // Handle LockCoinB
         if (registered_b) {
-            increase_lock_amount_and_duration<LockCoinB>(account, amount_b, increment_epochs);
+            if (amount_b > 0 || increment_epochs > 0) {
+                increase_lock_amount_and_duration<LockCoinB>(account, amount_b, increment_epochs);
+            };
         }
         else if (registered_a && amount_b > 0) {
             // B not locked, A is locked, create a new lock for B with the same duration as A
@@ -132,5 +136,87 @@ module vetoken::scripts {
     
     fun is_null<CoinType>(): bool {
         type_info::type_of<CoinType>() == type_info::type_of<NullDividend>()
+    }
+    
+
+    #[test_only]
+    use vetoken::coin_test;
+
+    #[test_only]
+    use aptos_framework::account;
+
+    #[test_only]
+    use aptos_framework::timestamp;
+
+    #[test_only]
+    struct FakeCoinA {}
+
+    #[test_only]
+    struct FakeCoinB {}
+
+    #[test_only]
+    const SECONDS_IN_WEEK: u64 = 7 * 24 * 60 * 60;
+
+    #[test_only]
+    fun initialize_for_test(aptos_framework: &signer, vetoken: &signer, min_locked_epochs: u64, max_locked_epochs: u64) {
+        vetoken::initialize<FakeCoinA>(vetoken, min_locked_epochs, max_locked_epochs, SECONDS_IN_WEEK);
+        vetoken::initialize<FakeCoinB>(vetoken, min_locked_epochs, max_locked_epochs, SECONDS_IN_WEEK);
+
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+        coin_test::initialize_fake_coin_with_decimals<FakeCoinA>(vetoken, 8);
+        coin_test::initialize_fake_coin_with_decimals<FakeCoinB>(vetoken, 8);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    fun increase_amount_duration_composed_with_existing_both_tokens_ok(aptos_framework: &signer, vetoken: &signer) {
+        initialize_for_test(aptos_framework, vetoken, 1, 4);
+
+        // lock the same amount and duration for both coins
+        let account = &account::create_account_for_test(@0xA);
+        coin::register<FakeCoinA>(account);
+        coin::register<FakeCoinB>(account);
+        coin::deposit(@0xA, coin_test::mint_coin<FakeCoinA>(vetoken, 1000));
+        coin::deposit(@0xA, coin_test::mint_coin<FakeCoinB>(vetoken, 1000));
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), 2);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinB>(vetoken, 1000), 2);
+        
+        increase_lock_amount_and_duration_composed<FakeCoinA, FakeCoinB>(account, 1000, 500, 2);
+        assert!(vetoken::locked_coin_amount<FakeCoinA>(@0xA) == 2000, 0);
+        assert!(vetoken::locked_coin_amount<FakeCoinB>(@0xA) == 1500, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinA>(@0xA) == 4, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinB>(@0xA) == 4, 0);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    fun increase_amount_duration_composed_with_existing_one_token_ok(aptos_framework: &signer, vetoken: &signer) {
+        initialize_for_test(aptos_framework, vetoken, 1, 4);
+
+        // for account @0xA, create lock for coin A only
+        let account = &account::create_account_for_test(@0xA);
+        coin::register<FakeCoinA>(account);
+        coin::register<FakeCoinB>(account);
+        coin::deposit(@0xA, coin_test::mint_coin<FakeCoinA>(vetoken, 1000));
+        coin::deposit(@0xA, coin_test::mint_coin<FakeCoinB>(vetoken, 1000));
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), 2);
+        
+        increase_lock_amount_and_duration_composed<FakeCoinA, FakeCoinB>(account, 1000, 500, 2);
+        assert!(vetoken::locked_coin_amount<FakeCoinA>(@0xA) == 2000, 0); // existing 1000 + new 1000
+        assert!(vetoken::locked_coin_amount<FakeCoinB>(@0xA) == 500, 0); // new 500
+        assert!(vetoken::unlockable_epoch<FakeCoinA>(@0xA) == 4, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinB>(@0xA) == 4, 0);
+
+        // for account @0xB, create lock for coin B only
+        let account = &account::create_account_for_test(@0xB);
+        coin::register<FakeCoinA>(account);
+        coin::register<FakeCoinB>(account);
+        coin::deposit(@0xB, coin_test::mint_coin<FakeCoinA>(vetoken, 1000));
+        coin::deposit(@0xB, coin_test::mint_coin<FakeCoinB>(vetoken, 1000));
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinB>(vetoken, 1000), 2);
+
+        increase_lock_amount_and_duration_composed<FakeCoinA, FakeCoinB>(account, 1000, 500, 2);
+        assert!(vetoken::locked_coin_amount<FakeCoinA>(@0xB) == 1000, 0); // new 1000
+        assert!(vetoken::locked_coin_amount<FakeCoinB>(@0xB) == 1500, 0); // existing 1000 + new 500
+        assert!(vetoken::unlockable_epoch<FakeCoinA>(@0xB) == 4, 0);
+        assert!(vetoken::unlockable_epoch<FakeCoinB>(@0xB) == 4, 0);
     }
 }

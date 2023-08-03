@@ -109,7 +109,7 @@ module vetoken::composable_vetoken {
     #[view] /// Query for the ComposedVeToken2<CoinTypeA, CoinTypeB> balance of this account at a given epoch
     public fun past_balance<CoinTypeA, CoinTypeB>(account_addr: address, epoch: u64): u128 acquires ComposedVeToken2 {
         assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
-        
+
         // VeToken<CoinTypeA> Component
         let balance_a = if (vetoken::is_account_registered<CoinTypeA>(account_addr)) {
             (vetoken::past_balance<CoinTypeA>(account_addr, epoch) as u128)
@@ -156,6 +156,12 @@ module vetoken::composable_vetoken {
 
     #[view]
     /// Returns true if the account has either token locked
+    public fun either_locked<CoinTypeA, CoinTypeB>(account_addr: address): bool {
+        vetoken::is_account_registered<CoinTypeA>(account_addr) || vetoken::is_account_registered<CoinTypeB>(account_addr)
+    }
+
+    #[view]
+    /// Do not use. for back compatibility only
     public fun has_lock<CoinType>(account_addr: address): bool {
         vetoken::is_account_registered<CoinType>(account_addr) || vetoken::is_account_registered<CoinType>(account_addr)
     }
