@@ -4,7 +4,6 @@ module vetoken::scripts {
     use aptos_std::type_info;
     use aptos_framework::coin;
 
-    use vetoken::composable_vetoken;
     use vetoken::dividend_distributor;
     use vetoken::vetoken;
     
@@ -38,9 +37,12 @@ module vetoken::scripts {
     }
 
     public entry fun lock_composed<LockCoinA, LockCoinB>(account: &signer, amount_a: u64, amount_b: u64, epochs: u64) {
-        let coin_a = coin::withdraw<LockCoinA>(account, amount_a);
-        let coin_b = coin::withdraw<LockCoinB>(account, amount_b);
-        composable_vetoken::lock(account, coin_a, coin_b, epochs);
+        if (amount_a > 0) {
+            vetoken::lock(account, coin::withdraw<LockCoinA>(account, amount_a), epochs);
+        };
+        if (amount_b > 0) {
+            vetoken::lock(account, coin::withdraw<LockCoinB>(account, amount_b), epochs);
+        };
     }
     
     /// (1) If neither A nor B is registered, do nothing (users should call `lock_composed` instead)
