@@ -43,13 +43,35 @@ module vetoken::scripts {
         composable_vetoken::lock(account, coin_a, coin_b, epochs);
     }
     
+    /// (1) If neither A nor B is registered, do nothing (users should call `lock_composed` instead)
+    /// (2) If both A and B are registered, this function assumes two tokens have the same lock duration (which is true if user only interacts with Dapp) 
+    /// and increases the lock amount/duration of both tokens
+    /// (3) If only one of A and B is registered, this function increases the lock amount/duration of the registered token, and create a new lock for the other token,
+    /// with the same lock duration as the registered token
+    /// If any of the two tokens is unlockable, this function will abort in the first `increase_lock_amount_and_duration` call of that token. We don't handle such an edge case
     public entry fun increase_lock_amount_and_duration_composed<LockCoinA, LockCoinB>(account: &signer, amount_a: u64, amount_b: u64, increment_epochs: u64) {
         let account_addr = signer::address_of(account);
-        if (coin::is_account_registered<LockCoinA>(account_addr)) {
+        let registered_a = vetoken::is_account_registered<LockCoinA>(account_addr);
+        let registered_b = vetoken::is_account_registered<LockCoinB>(account_addr);
+        let now_epoch = vetoken::now_epoch<LockCoinA>();
+
+        // Handle LockCoinA
+        if (registered_a) {
             increase_lock_amount_and_duration<LockCoinA>(account, amount_a, increment_epochs);
+        }
+        else if (registered_b && amount_a > 0) {
+            // A not locked, B is locked, create a new lock for A with the same duration as B
+            vetoken::lock(account, coin::withdraw<LockCoinA>(account, amount_a), vetoken::unlockable_epoch<LockCoinB>(account_addr) + increment_epochs - now_epoch);
         };
-        if (coin::is_account_registered<LockCoinB>(account_addr)) {
+
+        // Handle LockCoinB
+        if (registered_b) {
             increase_lock_amount_and_duration<LockCoinB>(account, amount_b, increment_epochs);
+        }
+        else if (registered_a && amount_b > 0) {
+            // B not locked, A is locked, create a new lock for B with the same duration as A
+            // Current unlockable epoch of A is already updated, so we can use it directly without incrementing
+            vetoken::lock(account, coin::withdraw<LockCoinB>(account, amount_b), vetoken::unlockable_epoch<LockCoinA>(account_addr) - now_epoch);
         };
     }
 

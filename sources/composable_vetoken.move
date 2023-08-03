@@ -109,7 +109,7 @@ module vetoken::composable_vetoken {
     #[view] /// Query for the ComposedVeToken2<CoinTypeA, CoinTypeB> balance of this account at a given epoch
     public fun past_balance<CoinTypeA, CoinTypeB>(account_addr: address, epoch: u64): u128 acquires ComposedVeToken2 {
         assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
-
+        
         // VeToken<CoinTypeA> Component
         let balance_a = (vetoken::past_balance<CoinTypeA>(account_addr, epoch) as u128);
 
@@ -142,6 +142,12 @@ module vetoken::composable_vetoken {
         // Apply Mutlipliers
         let (weight_percent_coin_a, weight_percent_coin_b) = weight_percents<CoinTypeA, CoinTypeB>();
         (total_supply_a * weight_percent_coin_a, total_supply_b * weight_percent_coin_b)
+    }
+
+    #[view]
+    /// Returns true if the account has either token locked
+    public fun has_lock<CoinType>(account_addr: address): bool {
+        vetoken::is_account_registered<CoinType>(account_addr) || vetoken::is_account_registered<CoinType>(account_addr)
     }
 
     #[view]
