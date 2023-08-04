@@ -23,6 +23,7 @@ module vetoken::vetoken {
     const ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH: u64 = 7;
     const ERR_VETOKEN_INVALID_PAST_EPOCH: u64 = 8;
     const ERR_VETOKEN_INVALID_LOCK_INCREASE: u64 = 9;
+    const ERR_VETOKEN_CANNOT_UNLOCK: u64 = 10;
 
     // Delegation Errors
     const ERR_VETOKEN_DELEGATE_UNREGISTERED: u64 = 50;
@@ -231,11 +232,9 @@ module vetoken::vetoken {
         let account_addr = signer::address_of(account);
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
-        let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
-        assert!(coin::value(&vetoken_store.vetoken.locked) > 0, ERR_VETOKEN_NOT_LOCKED);
+        assert!(can_unlock<CoinType>(account_addr), ERR_VETOKEN_CANNOT_UNLOCK);
 
-        let now_epoch = now_epoch<CoinType>();
-        assert!(now_epoch >= vetoken_store.vetoken.unlockable_epoch, ERR_VETOKEN_LOCKED);
+        let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
 
         // Update the VeToken
         vetoken_store.vetoken.unlockable_epoch = 0;
@@ -380,6 +379,23 @@ module vetoken::vetoken {
     }
 
     #[view]
+    /// Returns the amount of coins locked in the account's VeTokenStore
+    public fun locked_coin_amount<CoinType>(account_addr: address): u64 acquires VeTokenStore {
+        if (!is_account_registered<CoinType>(account_addr)) return 0;
+        let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);
+        coin::value(&vetoken_store.vetoken.locked)
+    }
+
+    #[view]
+    /// Returns true if user can unlock their VeToken
+    /// Both conditions must be met: (1) non-zero amount is locked (2) unlockable epoch has been reached
+    public fun can_unlock<CoinType>(account_addr: address): bool acquires VeTokenInfo, VeTokenStore {
+        if (locked_coin_amount<CoinType>(account_addr) == 0) return false;
+        let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);
+        vetoken_store.vetoken.unlockable_epoch <= now_epoch<CoinType>()
+    }
+
+    #[view]
     public fun now_epoch<CoinType>(): u64 acquires VeTokenInfo {
         seconds_to_epoch<CoinType>(timestamp::now_seconds())
     }
@@ -410,15 +426,9 @@ module vetoken::vetoken {
     }
 
     #[view]
-    public fun locked_coin_amount<CoinType>(account_addr: address): u64 acquires VeTokenStore {
-        if (!is_account_registered<CoinType>(account_addr)) return 0;
-        let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);
-        coin::value(&vetoken_store.vetoken.locked)
-    }
-
-    #[view]
     public fun preview_balance_after_increase<CoinType>(account_addr: address, added_amount: u64, increment_epochs: u64): u64 acquires VeTokenInfo, VeTokenStore {
-        //assert!(!can_unlock<CoinType>(account_addr), ERR_VETOKEN_);
+        // If there's an existing unlockable position, user must unlock before increasing
+        assert!(!can_unlock<CoinType>(account_addr), ERR_VETOKEN_NOT_LOCKED);
         let now_epoch = now_epoch<CoinType>();
         let locked_amount = locked_coin_amount<CoinType>(account_addr);
         // If there's no existing lock, it's equivalent to having a locked position of zero amount and unlockalbe epoch of now_epoch
@@ -471,12 +481,21 @@ module vetoken::vetoken {
         let u1 = &account::create_account_for_test(@0xA);
         register<FakeCoin>(u1);
 
+        // cannot unlock because nothing is locked
+        assert!(!can_unlock<FakeCoin>(@0xA), 0);
+
         // lock
         let lock_coin = coin_test::mint_coin<FakeCoin>(vetoken, 1000);
         lock(u1, lock_coin, 1);
 
+        // cannot unlock because lock is still active
+        assert!(!can_unlock<FakeCoin>(@0xA), 0);
+
         // unlock (view function flips even if `unlock` isn't explicitly called)
         timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
+
+        // can unlock because lock is expired
+        assert!(can_unlock<FakeCoin>(@0xA), 0);
 
         let unlocked = unlock<FakeCoin>(u1);
         assert!(coin::value(&unlocked) == 1000, 0);
@@ -536,7 +555,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    #[expected_failure(abort_code = ERR_VETOKEN_LOCKED)]
+    #[expected_failure(abort_code = ERR_VETOKEN_CANNOT_UNLOCK)]
     fun early_unlock_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
         initialize_for_test(aptos_framework, vetoken, 1, 52);
 
