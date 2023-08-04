@@ -29,6 +29,13 @@ module vetoken::scripts {
         vetoken::increase_lock_amount_and_duration(account, coin, increment_epochs);
     }
 
+    /// If the lock is expired, relock it for `epochs` epochs
+    /// Abort with ERR_VETOKEN_CANNOT_UNLOCK in `vetoken::unlock` function
+    public entry fun relock<CoinType>(account: &signer, epochs: u64) {
+        let unlocked_coin = vetoken::unlock<CoinType>(account);
+        vetoken::lock(account, unlocked_coin, epochs);
+    }
+
     public entry fun claim<LockCoin, DividendCoin>(account: &signer) {
         let dividend = dividend_distributor::claim<LockCoin, DividendCoin>(account);
         let account_addr = signer::address_of(account);
