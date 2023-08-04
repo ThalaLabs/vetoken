@@ -38,12 +38,13 @@ module vetoken::scripts {
         coin::deposit<DividendCoin>(account_addr, dividend);
     }
 
-    public entry fun lock_composed<LockCoinA, LockCoinB>(account: &signer, amount_a: u64, amount_b: u64, epochs: u64) {
-        if (amount_a > 0) {
-            vetoken::lock(account, coin::withdraw<LockCoinA>(account, amount_a), epochs);
+    public entry fun unlock_composed<LockCoinA, LockCoinB>(account: &signer) {
+        let account_addr = signer::address_of(account);
+        if (vetoken::can_unlock<LockCoinA>(account_addr)) {
+            unlock<LockCoinA>(account);
         };
-        if (amount_b > 0) {
-            vetoken::lock(account, coin::withdraw<LockCoinB>(account, amount_b), epochs);
+        if (vetoken::can_unlock<LockCoinB>(account_addr)) {
+            unlock<LockCoinB>(account);
         };
     }
 
@@ -51,9 +52,7 @@ module vetoken::scripts {
         let dividend = dividend_distributor::claim<LockCoinA, DividendCoin>(account);
         coin::merge(&mut dividend, dividend_distributor::claim<LockCoinB, DividendCoin>(account));
         let account_addr = signer::address_of(account);
-        if (!coin::is_account_registered<DividendCoin>(account_addr)) {
-            coin::register<DividendCoin>(account);
-        };
+        coin::register<DividendCoin>(account);
         coin::deposit<DividendCoin>(account_addr, dividend);
     }
 
