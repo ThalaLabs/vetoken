@@ -425,6 +425,24 @@ module vetoken::vetoken {
         vetoken_info.max_locked_epochs
     }
 
+    #[view]
+    public fun preview_balance_after_increase<CoinType>(account_addr: address, added_amount: u64, increment_epochs: u64): u64 acquires VeTokenInfo, VeTokenStore {
+        // If there's an existing unlockable position, user must unlock before increasing
+        assert!(!can_unlock<CoinType>(account_addr), ERR_VETOKEN_NOT_LOCKED);
+        let now_epoch = now_epoch<CoinType>();
+        let locked_amount = locked_coin_amount<CoinType>(account_addr);
+        // If there's no existing lock, it's equivalent to having a locked position of zero amount and unlockable epoch of now_epoch
+        let old_unlockable_epoch = if (locked_amount == 0) now_epoch else unlockable_epoch<CoinType>(account_addr);
+
+        let new_unlockable_epoch = old_unlockable_epoch + increment_epochs;
+        let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
+        assert!(new_unlockable_epoch - now_epoch <= vetoken_info.max_locked_epochs, ERR_VETOKEN_INVALID_LOCK_DURATION);
+
+        let new_unnormalized_balance = ((locked_amount + added_amount) as u128) * ((new_unlockable_epoch - now_epoch) as u128);
+        let max_locked_epochs = (vetoken_info.max_locked_epochs as u128);
+        (new_unnormalized_balance / max_locked_epochs as u64)
+    }
+
     #[test_only]
     use vetoken::coin_test;
 
@@ -549,23 +567,29 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun increase_lock_duration_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun increase_lock_duration_and_preview_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
         initialize_for_test(aptos_framework, vetoken, 1, 5);
 
         let u1 = &account::create_account_for_test(@0xA);
         register<FakeCoin>(u1);
 
         // lock
+        let preview_balance = preview_balance_after_increase<FakeCoin>(@0xA, 1000, 2);
         lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == preview_balance, 0);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 1000 * 2 / 5, 0);
 
         // extend 2 epochs
+        let preview_balance = preview_balance_after_increase<FakeCoin>(@0xA, 0, 2);
         increase_lock_duration<FakeCoin>(u1, 2);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == preview_balance, 0);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 1000 * 4 / 5, 0);
 
         // 3 epochs later, extend 3 more epochs
         timestamp::fast_forward_seconds(3 * seconds_in_epoch<FakeCoin>());
+        let preview_balance = preview_balance_after_increase<FakeCoin>(@0xA, 0, 3);
         increase_lock_duration<FakeCoin>(u1, 3);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == preview_balance, 0);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 1000 * 4 / 5, 0);
     }
 
@@ -586,23 +610,29 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun increase_lock_amount_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun increase_lock_amount_and_preview_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
         initialize_for_test(aptos_framework, vetoken, 1, 5);
 
         let u1 = &account::create_account_for_test(@0xA);
         register<FakeCoin>(u1);
 
         // lock
+        let preview_balance = preview_balance_after_increase<FakeCoin>(@0xA, 1000, 2);
         lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == preview_balance, 0);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 1000 * 2 / 5, 0);
 
         // increase lock amount
+        let preview_balance = preview_balance_after_increase<FakeCoin>(@0xA, 1000, 0);
         increase_lock_amount<FakeCoin>(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000));
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == preview_balance, 0);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 2000 * 2 / 5, 0);
 
         // 1 epochs later, further increase lock amount
         timestamp::fast_forward_seconds(seconds_in_epoch<FakeCoin>());
+        let preview_balance = preview_balance_after_increase<FakeCoin>(@0xA, 1000, 0);
         increase_lock_amount<FakeCoin>(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000));
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == preview_balance, 0);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 3000 * 1 / 5, 0); // 1 epoch left till unlock
     }
 
@@ -623,18 +653,22 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun increase_lock_amount_and_duration_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun increase_lock_amount_and_duration_and_preview_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
         initialize_for_test(aptos_framework, vetoken, 1, 5);
 
         let u1 = &account::create_account_for_test(@0xA);
         register<FakeCoin>(u1);
 
         // lock
+        let preview_balance = preview_balance_after_increase<FakeCoin>(@0xA, 1000, 2);
         lock(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 2);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == preview_balance, 0);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 1000 * 2 / 5, 0);
 
         // double the amount and duration
+        let preview_balance = preview_balance_after_increase<FakeCoin>(@0xA, 1000, 1);
         increase_lock_amount_and_duration<FakeCoin>(u1, coin_test::mint_coin<FakeCoin>(vetoken, 1000), 1);
+        assert!(balance<FakeCoin>(signer::address_of(u1)) == preview_balance, 0);
         assert!(balance<FakeCoin>(signer::address_of(u1)) == 2000 * 3 / 5, 0);
     }
 
