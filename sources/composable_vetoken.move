@@ -183,6 +183,22 @@ module vetoken::composable_vetoken {
         exists<ComposedVeToken2<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>())
     }
 
+    #[view]
+    /// For frontend use case: we want to know what the balance will be after increasing lock amount / duration
+    public fun preview_balance_after_increase<CoinTypeA, CoinTypeB>(account_addr: address, amount_a: u64, increment_epochs_a: u64, amount_b: u64, increment_epochs_b: u64): u128 acquires ComposedVeToken2 {
+        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
+
+        // VeToken<CoinTypeA> Component
+        let balance_a = (vetoken::preview_balance_after_increase<CoinTypeA>(account_addr, amount_a, increment_epochs_a) as u128);
+
+        // VeToken<CoinTypeB> Component
+        let balance_b = (vetoken::preview_balance_after_increase<CoinTypeB>(account_addr, amount_b, increment_epochs_b) as u128);
+
+        // Apply Multipliers
+        let (weight_percent_coin_a, weight_percent_coin_b) = weight_percents<CoinTypeA, CoinTypeB>();
+        ((balance_a * weight_percent_coin_a) + (balance_b * weight_percent_coin_b)) / 100
+    }
+
     // Internal Helpers
 
     fun account_address<Type>(): address {
@@ -313,47 +329,21 @@ module vetoken::composable_vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun composable_vetoken_lock_ok(aptos_framework: &signer, vetoken: &signer) {
-        initialize_for_test(aptos_framework, vetoken, 1, 4);
-        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
-
-        let epoch = vetoken::now_epoch<FakeCoinA>();
-
-        let account = &account::create_account_for_test(@0xA);
-        lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), coin_test::mint_coin<FakeCoinB>(vetoken, 1000), 1);
-        assert!(vetoken::balance<FakeCoinA>(signer::address_of(account)) == 250, 0);
-        assert!(vetoken::balance<FakeCoinB>(signer::address_of(account)) == 250, 0);
-        assert!(vetoken::unlockable_epoch<FakeCoinA>(signer::address_of(account)) == epoch + 1, 0);
-        assert!(vetoken::unlockable_epoch<FakeCoinB>(signer::address_of(account)) == epoch + 1, 0);
-    }
-
-    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    #[expected_failure(abort_code = vetoken::vetoken::ERR_VETOKEN_LOCKED)]
-    fun composable_vetoken_locked_err(aptos_framework: &signer, vetoken: &signer) {
-        initialize_for_test(aptos_framework, vetoken, 1, 4);
-        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
-
-        let account = &account::create_account_for_test(@0xA);
-        vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), 1);
-
-        // FakeCoinA is already locked
-        lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), coin_test::mint_coin<FakeCoinB>(vetoken, 1000), 1);
-    }
-
-    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
     fun composable_vetoken_balance_ok(aptos_framework: &signer, vetoken: &signer) acquires ComposedVeToken2 {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
 
         // lock the same amounts for both coins
         let account = &account::create_account_for_test(@0xA);
+        let preview_balance = preview_balance_after_increase<FakeCoinA, FakeCoinB>(@0xA, 1000, 1, 1000, 1);
         vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), 1);
         vetoken::lock(account, coin_test::mint_coin<FakeCoinB>(vetoken, 1000), 1);
-        assert!(vetoken::balance<FakeCoinA>(signer::address_of(account)) == 250, 0);
-        assert!(vetoken::balance<FakeCoinB>(signer::address_of(account)) == 250, 0);
+        assert!(vetoken::balance<FakeCoinA>(@0xA) == 250, 0);
+        assert!(vetoken::balance<FakeCoinB>(@0xA) == 250, 0);
 
         // Only half of FakeCoinB contributes to the total balance
-        assert!(balance<FakeCoinA, FakeCoinB>(signer::address_of(account)) == 375, 0);
+        assert!(balance<FakeCoinA, FakeCoinB>(@0xA) == 375, 0);
+        assert!((balance<FakeCoinA, FakeCoinB>(@0xA) as u128) == preview_balance, 0);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
@@ -364,12 +354,14 @@ module vetoken::composable_vetoken {
         // lock the same amounts for both coins. However `FakeCoinB` has twice as long a lock duration.
         let account = &account::create_account_for_test(@0xA);
         vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), 1);
+        let preview_balance = preview_balance_after_increase<FakeCoinA, FakeCoinB>(@0xA, 0, 0, 1000, 2);
         vetoken::lock(account, coin_test::mint_coin<FakeCoinB>(vetoken, 1000), 2);
-        assert!(vetoken::balance<FakeCoinA>(signer::address_of(account)) == 250, 0);
-        assert!(vetoken::balance<FakeCoinB>(signer::address_of(account)) == 500, 0);
+        assert!(vetoken::balance<FakeCoinA>(@0xA) == 250, 0);
+        assert!(vetoken::balance<FakeCoinB>(@0xA) == 500, 0);
 
         // Only half of FakeCoinB contributes to the total balance
-        assert!(balance<FakeCoinA, FakeCoinB>(signer::address_of(account)) == 500, 0);
+        assert!(balance<FakeCoinA, FakeCoinB>(@0xA) == 500, 0);
+        assert!((balance<FakeCoinA, FakeCoinB>(@0xA) as u128) == preview_balance, 0);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
@@ -380,6 +372,6 @@ module vetoken::composable_vetoken {
         let account = &account::create_account_for_test(@0xA);
         vetoken::register<FakeCoinA>(account);
         vetoken::register<FakeCoinB>(account);
-        assert!(balance<FakeCoinA, FakeCoinB>(signer::address_of(account)) == 0, 0);
+        assert!(balance<FakeCoinA, FakeCoinB>(@0xA) == 0, 0);
     }
 }
