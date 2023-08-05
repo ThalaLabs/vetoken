@@ -431,13 +431,8 @@ module vetoken::vetoken {
         assert!(!can_unlock<CoinType>(account_addr), ERR_VETOKEN_NOT_LOCKED);
         let now_epoch = now_epoch<CoinType>();
         let locked_amount = locked_coin_amount<CoinType>(account_addr);
-        // If there's no existing lock, it's equivalent to having a locked position of zero amount and unlockalbe epoch of now_epoch
-        let old_unlockable_epoch = if (locked_amount == 0) {
-            now_epoch
-        }
-        else {
-            unlockable_epoch<CoinType>(account_addr)
-        };
+        // If there's no existing lock, it's equivalent to having a locked position of zero amount and unlockable epoch of now_epoch
+        let old_unlockable_epoch = if (locked_amount == 0) now_epoch else unlockable_epoch<CoinType>(account_addr);
 
         let new_unlockable_epoch = old_unlockable_epoch + increment_epochs;
         let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
