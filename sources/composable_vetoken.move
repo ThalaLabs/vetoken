@@ -147,10 +147,10 @@ module vetoken::composable_vetoken {
         else if (epoch == snapshot.epoch) return (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b);
 
         // Binary search a snapshot where the epoch is the highest behind the target epoch. The checks
-        // before this reaching this search ensures that the supplied epoch is in range of [low, hi]
+        // before reaching this search ensures that the supplied epoch is in range of [low, hi]
         //
-        // NOTE: If we reach the terminating condition, low >= hi, then that indicates the the last value
-        // set for `snapshot` (index low - 1) is desired value
+        // NOTE: If we reach the terminating condition, low >= hi, then that indicates the index
+        // (low - 1) is the right snapshot with the highest epoch below the target
         let low = 0;
         let high = num_snapshots - 1;
         while (low < high) {
@@ -164,6 +164,7 @@ module vetoken::composable_vetoken {
             else high = mid
         };
 
+        snapshot = vector::borrow(snapshots, low - 1);
         return (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b)
     }
 
