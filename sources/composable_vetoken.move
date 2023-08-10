@@ -1,6 +1,6 @@
 module vetoken::composable_vetoken {
     use std::signer;
-    use std::vector;
+    use aptos_std::smart_vector::{Self, SmartVector};
 
     use aptos_std::type_info;
 
@@ -39,7 +39,7 @@ module vetoken::composable_vetoken {
         weight_percent_coin_b: u128,
         mutable_weights: bool,
 
-        weight_snapshots: vector<WeightSnapshot>,
+        weight_snapshots: SmartVector<WeightSnapshot>,
     }
 
     /// Create a ComposedVeToken2 over `CoinTypeA` and `CoinTypeB`. Only `CoinTypeA` is allowed to instantiate
@@ -64,7 +64,7 @@ module vetoken::composable_vetoken {
         // the owner of the first coin slot controls configuration for this `ComposedVeToken2`.
         assert!(account_address<CoinTypeA>() == signer::address_of(account), ERR_COMPOSABLE_VETOKEN2_COIN_ADDRESS_MISMATCH);
 
-        let weight_snapshots = vector[WeightSnapshot{weight_percent_coin_a, weight_percent_coin_b, epoch: vetoken::now_epoch<CoinTypeA>()}];
+        let weight_snapshots = smart_vector::singleton(WeightSnapshot{weight_percent_coin_a, weight_percent_coin_b, epoch: vetoken::now_epoch<CoinTypeA>()});
         move_to(account, ComposedVeToken2<CoinTypeA, CoinTypeB> { weight_percent_coin_a, weight_percent_coin_b, mutable_weights, weight_snapshots });
     }
 
@@ -77,14 +77,14 @@ module vetoken::composable_vetoken {
         assert!(composable_vetoken.mutable_weights, ERR_COMPOSABLE_VETOKEN2_NONMUTABLE_WEIGHTS);
 
         let now_epoch = vetoken::now_epoch<CoinTypeA>();
-        let num_snapshots = vector::length(&composable_vetoken.weight_snapshots);
-        let last_snapshot = vector::borrow_mut(&mut composable_vetoken.weight_snapshots, num_snapshots - 1);
+        let num_snapshots = smart_vector::length(&composable_vetoken.weight_snapshots);
+        let last_snapshot = smart_vector::borrow_mut(&mut composable_vetoken.weight_snapshots, num_snapshots - 1);
         if (last_snapshot.epoch == now_epoch) {
             last_snapshot.weight_percent_coin_a = weight_percent_coin_a;
             last_snapshot.weight_percent_coin_b = weight_percent_coin_b;
         } else {
             let weights = WeightSnapshot{weight_percent_coin_a, weight_percent_coin_b, epoch: now_epoch};
-            vector::push_back(&mut composable_vetoken.weight_snapshots, weights);
+            smart_vector::push_back(&mut composable_vetoken.weight_snapshots, weights);
         };
 
         composable_vetoken.weight_percent_coin_a = weight_percent_coin_a;
@@ -126,14 +126,14 @@ module vetoken::composable_vetoken {
 
         let composable_vetoken = borrow_global<ComposedVeToken2<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>());
         let snapshots = &composable_vetoken.weight_snapshots;
-        let num_snapshots = vector::length(snapshots);
+        let num_snapshots = smart_vector::length(snapshots);
 
         // Check if the latest snapshot suffices
-        let snapshot = vector::borrow(snapshots, num_snapshots - 1);
+        let snapshot = smart_vector::borrow(snapshots, num_snapshots - 1);
         if (epoch >= snapshot.epoch) return (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b);
 
         // Check if the first snapshot sufficies or the supplied epoch is too far in the past
-        let snapshot = vector::borrow(snapshots, 0);
+        let snapshot = smart_vector::borrow(snapshots, 0);
         if (epoch < snapshot.epoch) return (0, 0)
         else if (epoch == snapshot.epoch) return (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b);
 
@@ -146,7 +146,7 @@ module vetoken::composable_vetoken {
         let high = num_snapshots - 1;
         while (low < high) {
             let mid = (low + high) / 2;
-            let snapshot = vector::borrow(snapshots, mid);
+            let snapshot = smart_vector::borrow(snapshots, mid);
 
             // return early if we find an exact epoch
             if (epoch == snapshot.epoch) return (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b);
@@ -155,7 +155,7 @@ module vetoken::composable_vetoken {
             else high = mid
         };
 
-        let snapshot = vector::borrow(snapshots, low - 1);
+        let snapshot = smart_vector::borrow(snapshots, low - 1);
         (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b)
     }
 
@@ -330,40 +330,53 @@ module vetoken::composable_vetoken {
         timestamp::fast_forward_seconds(5*vetoken::seconds_in_epoch<FakeCoinA>());
         update_weights<FakeCoinA, FakeCoinB>(vetoken, 50, 50);
 
-        // Epoch [0,4]
-        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(0);
-        assert!(weight_a == 0, 0);
-        assert!(weight_b == 0, 0);
+        // Epoch 20
+        timestamp::fast_forward_seconds(10*vetoken::seconds_in_epoch<FakeCoinA>());
+        update_weights<FakeCoinA, FakeCoinB>(vetoken, 80, 20);
 
-        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(2);
-        assert!(weight_a == 0, 0);
-        assert!(weight_b == 0, 0);
-
-        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(4);
-        assert!(weight_a == 0, 0);
-        assert!(weight_b == 0, 0);
+        // Epoch [0, 4]
+        {
+            let (i, end) = (0, 4);
+            while (i <= end) {
+                let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(i);
+                assert!(weight_a == 0, 0);
+                assert!(weight_b == 0, 0);
+                i = i + 1;
+            }
+        };
 
         // Epoch [5, 9]
-        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(5);
-        assert!(weight_a == 33, 0);
-        assert!(weight_b == 67, 0);
+        {
+            let (i, end) = (5, 9);
+            while (i <= end) {
+                let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(i);
+                assert!(weight_a == 33, 0);
+                assert!(weight_b == 67, 0);
+                i = i + 1;
+            }
+        };
 
-        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(7);
-        assert!(weight_a == 33, 0);
-        assert!(weight_b == 67, 0);
+        // Epoch [10, 19]
+        {
+            let (i, end) = (10, 19);
+            while (i <= end) {
+                let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(i);
+                assert!(weight_a == 50, 0);
+                assert!(weight_b == 50, 0);
+                i = i + 1;
+            }
+        };
 
-        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(9);
-        assert!(weight_a == 33, 0);
-        assert!(weight_b == 67, 0);
-
-        // Epoch [10, present]
-        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(10);
-        assert!(weight_a == 50, 0);
-        assert!(weight_b == 50, 0);
-
-        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(100);
-        assert!(weight_a == 50, 0);
-        assert!(weight_b == 50, 0);
+        // Epoch [20, 100]
+        {
+            let (i, end) = (20, 100);
+            while (i <= end) {
+                let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(i);
+                assert!(weight_a == 80, 0);
+                assert!(weight_b == 20, 0);
+                i = i + 1;
+            }
+        };
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
