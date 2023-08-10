@@ -29,17 +29,16 @@ module vetoken::composable_vetoken {
     ///
 
     struct WeightSnapshot has store {
-        weight_percent_coin_a: u128,
-        weight_percent_coin_b: u128,
+        weight_percent_coin_a: u64,
+        weight_percent_coin_b: u64,
         epoch: u64,
     }
 
     struct ComposedVeToken2<phantom CoinTypeA, phantom CoinTypeB> has key {
-        weight_percent_coin_a: u128,
-        weight_percent_coin_b: u128,
+        weight_percent_coin_a: u64,
+        weight_percent_coin_b: u64,
         mutable_weights: bool,
-
-        weight_snapshots: SmartVector<WeightSnapshot>,
+        weight_snapshots: SmartVector<WeightSnapshot>
     }
 
     /// Create a ComposedVeToken2 over `CoinTypeA` and `CoinTypeB`. Only `CoinTypeA` is allowed to instantiate
@@ -52,7 +51,7 @@ module vetoken::composable_vetoken {
     ///
     /// Note: `ComposedVeToken2` does not lock coins seperately from the `vetoken::vetoken` module. Rather `ComposedVeToken2`
     /// is a sort-of "view-based" wrapper over `VeToken`.
-    public entry fun initialize<CoinTypeA, CoinTypeB>(account: &signer, weight_percent_coin_a: u128, weight_percent_coin_b: u128, mutable_weights: bool) {
+    public entry fun initialize<CoinTypeA, CoinTypeB>(account: &signer, weight_percent_coin_a: u64, weight_percent_coin_b: u64, mutable_weights: bool) {
         assert!(!initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_INITIALIZED);
         assert!(vetoken::initialized<CoinTypeA>(), ERR_VETOKEN_UNINITIALIZED);
         assert!(vetoken::initialized<CoinTypeB>(), ERR_VETOKEN_UNINITIALIZED);
@@ -68,7 +67,7 @@ module vetoken::composable_vetoken {
         move_to(account, ComposedVeToken2<CoinTypeA, CoinTypeB> { weight_percent_coin_a, weight_percent_coin_b, mutable_weights, weight_snapshots });
     }
 
-    public entry fun update_weights<CoinTypeA, CoinTypeB>(account: &signer, weight_percent_coin_a: u128, weight_percent_coin_b: u128) acquires ComposedVeToken2 {
+    public entry fun update_weights<CoinTypeA, CoinTypeB>(account: &signer, weight_percent_coin_a: u64, weight_percent_coin_b: u64) acquires ComposedVeToken2 {
         assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
         assert!(account_address<CoinTypeA>() == signer::address_of(account), ERR_COMPOSABLE_VETOKEN2_COIN_ADDRESS_MISMATCH);
         assert!(weight_percent_coin_a > 0 && weight_percent_coin_b > 0, ERR_COMPOSABLE_VETOKEN2_INVALID_WEIGHTS); 
@@ -92,7 +91,7 @@ module vetoken::composable_vetoken {
     }
 
     #[view] /// Query for the current weight configuration
-    public fun weight_percents<CoinTypeA, CoinTypeB>(): (u128, u128) acquires ComposedVeToken2 {
+    public fun weight_percents<CoinTypeA, CoinTypeB>(): (u64, u64) acquires ComposedVeToken2 {
         let composable_vetoken = borrow_global<ComposedVeToken2<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>());
         (composable_vetoken.weight_percent_coin_a, composable_vetoken.weight_percent_coin_b)
     }
@@ -121,7 +120,7 @@ module vetoken::composable_vetoken {
     }
 
     #[view] /// Query for the latest weight configuration at a given epoch
-    public fun past_weight_percents<CoinTypeA, CoinTypeB>(epoch: u64): (u128, u128) acquires ComposedVeToken2 {
+    public fun past_weight_percents<CoinTypeA, CoinTypeB>(epoch: u64): (u64, u64) acquires ComposedVeToken2 {
         assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
 
         let composable_vetoken = borrow_global<ComposedVeToken2<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>());
@@ -171,7 +170,7 @@ module vetoken::composable_vetoken {
 
         // Apply Multipliers
         let (weight_percent_coin_a, weight_percent_coin_b) = past_weight_percents<CoinTypeA, CoinTypeB>(epoch);
-        ((balance_a * weight_percent_coin_a) + (balance_b * weight_percent_coin_b)) / 100
+        ((balance_a * (weight_percent_coin_a as u128)) + (balance_b * (weight_percent_coin_b as u128))) / 100
     }
 
     #[view] /// Query for the ComposedVeToken2<CoinTypeA, CoinTypeB> total supply at a given epoch
@@ -194,7 +193,7 @@ module vetoken::composable_vetoken {
 
         // Apply Mutlipliers
         let (weight_percent_coin_a, weight_percent_coin_b) = weight_percents<CoinTypeA, CoinTypeB>();
-        (total_supply_a * weight_percent_coin_a, total_supply_b * weight_percent_coin_b)
+        (total_supply_a * (weight_percent_coin_a as u128), total_supply_b * (weight_percent_coin_b as u128))
     }
 
     #[view] /// Return the total amount of `DividendCoin` claimable for two types of underlying VeToken
@@ -219,7 +218,7 @@ module vetoken::composable_vetoken {
 
         // Apply Multipliers
         let (weight_percent_coin_a, weight_percent_coin_b) = weight_percents<CoinTypeA, CoinTypeB>();
-        ((balance_a * weight_percent_coin_a) + (balance_b * weight_percent_coin_b)) / 100
+        ((balance_a * (weight_percent_coin_a as u128)) + (balance_b * (weight_percent_coin_b as u128))) / 100
     }
 
     // Internal Helpers
