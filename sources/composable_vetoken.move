@@ -130,7 +130,7 @@ module vetoken::composable_vetoken {
 
         // Check if the latest snapshot suffices
         let snapshot = vector::borrow(snapshots, num_snapshots - 1);
-        if (epoch == snapshot.epoch) return (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b);
+        if (epoch >= snapshot.epoch) return (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b);
 
         // Check if the first snapshot sufficies or the supplied epoch is too far in the past
         let snapshot = vector::borrow(snapshots, 0);
@@ -320,36 +320,48 @@ module vetoken::composable_vetoken {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
 
         // Epoch 0 holds no weight configuration
-        timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeCoinA>());
+
+        // Epoch 5
+        timestamp::fast_forward_seconds(5*vetoken::seconds_in_epoch<FakeCoinA>());
         initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
+        update_weights<FakeCoinA, FakeCoinB>(vetoken, 33, 67); // changed in the same epoch
 
-        // Epoch 1
-        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(0);
-        assert!(weight_a == 0, 0);
-        assert!(weight_b == 0, 0);
-
-        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(1);
-        assert!(weight_a == 100, 0);
-        assert!(weight_b == 50, 0);
-
-        update_weights<FakeCoinA, FakeCoinB>(vetoken, 33, 67);
-        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(1);
-        assert!(weight_a == 33, 0);
-        assert!(weight_b == 67, 0);
-
-        // Epoch 2
-        timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeCoinA>());
+        // Epoch 10
+        timestamp::fast_forward_seconds(5*vetoken::seconds_in_epoch<FakeCoinA>());
         update_weights<FakeCoinA, FakeCoinB>(vetoken, 50, 50);
 
+        // Epoch [0,4]
         let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(0);
         assert!(weight_a == 0, 0);
         assert!(weight_b == 0, 0);
 
-        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(1);
+        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(2);
+        assert!(weight_a == 0, 0);
+        assert!(weight_b == 0, 0);
+
+        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(4);
+        assert!(weight_a == 0, 0);
+        assert!(weight_b == 0, 0);
+
+        // Epoch [5, 9]
+        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(5);
         assert!(weight_a == 33, 0);
         assert!(weight_b == 67, 0);
 
-        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(2);
+        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(7);
+        assert!(weight_a == 33, 0);
+        assert!(weight_b == 67, 0);
+
+        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(9);
+        assert!(weight_a == 33, 0);
+        assert!(weight_b == 67, 0);
+
+        // Epoch [10, present]
+        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(10);
+        assert!(weight_a == 50, 0);
+        assert!(weight_b == 50, 0);
+
+        let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(100);
         assert!(weight_a == 50, 0);
         assert!(weight_b == 50, 0);
     }
