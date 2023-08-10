@@ -3,7 +3,6 @@ module vetoken::composable_vetoken {
     use std::vector;
 
     use aptos_std::type_info;
-    use aptos_framework::coin::Coin;
 
     use vetoken::dividend_distributor;
     use vetoken::vetoken;
@@ -29,7 +28,7 @@ module vetoken::composable_vetoken {
     /// Resources
     ///
 
-    struct WeightSnapshot<phantom CoinTypeA, phantom CoinTypeB> has store {
+    struct WeightSnapshot has store {
         weight_percent_coin_a: u128,
         weight_percent_coin_b: u128,
         epoch: u64,
@@ -40,7 +39,7 @@ module vetoken::composable_vetoken {
         weight_percent_coin_b: u128,
         mutable_weights: bool,
 
-        weight_snapshots: vector<WeightSnapshot<CoinTypeA, CoinTypeB>>,
+        weight_snapshots: vector<WeightSnapshot>,
     }
 
     /// Create a ComposedVeToken2 over `CoinTypeA` and `CoinTypeB`. Only `CoinTypeA` is allowed to instantiate
@@ -65,7 +64,7 @@ module vetoken::composable_vetoken {
         // the owner of the first coin slot controls configuration for this `ComposedVeToken2`.
         assert!(account_address<CoinTypeA>() == signer::address_of(account), ERR_COMPOSABLE_VETOKEN2_COIN_ADDRESS_MISMATCH);
 
-        let weight_snapshots = vector[WeightSnapshot<CoinTypeA, CoinTypeB>{weight_percent_coin_a, weight_percent_coin_b, epoch: vetoken::now_epoch<CoinTypeA>()}];
+        let weight_snapshots = vector[WeightSnapshot{weight_percent_coin_a, weight_percent_coin_b, epoch: vetoken::now_epoch<CoinTypeA>()}];
         move_to(account, ComposedVeToken2<CoinTypeA, CoinTypeB> { weight_percent_coin_a, weight_percent_coin_b, mutable_weights, weight_snapshots });
     }
 
@@ -84,20 +83,12 @@ module vetoken::composable_vetoken {
             last_snapshot.weight_percent_coin_a = weight_percent_coin_a;
             last_snapshot.weight_percent_coin_b = weight_percent_coin_b;
         } else {
-            let weights = WeightSnapshot<CoinTypeA, CoinTypeB>{weight_percent_coin_a, weight_percent_coin_b, epoch: now_epoch};
+            let weights = WeightSnapshot{weight_percent_coin_a, weight_percent_coin_b, epoch: now_epoch};
             vector::push_back(&mut composable_vetoken.weight_snapshots, weights);
         };
 
         composable_vetoken.weight_percent_coin_a = weight_percent_coin_a;
         composable_vetoken.weight_percent_coin_b = weight_percent_coin_b;
-    }
-
-    /// Lock two tokens for the `ComposedVeToken2` configuration.
-    public fun lock<CoinTypeA, CoinTypeB>(account: &signer, coin_a: Coin<CoinTypeA>, coin_b: Coin<CoinTypeB>, locked_epochs: u64) {
-        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
-
-        vetoken::lock(account, coin_a, locked_epochs);
-        vetoken::lock(account, coin_b, locked_epochs);
     }
 
     #[view] /// Query for the current weight configuration
@@ -155,7 +146,7 @@ module vetoken::composable_vetoken {
         let high = num_snapshots - 1;
         while (low < high) {
             let mid = (low + high) / 2;
-            snapshot = vector::borrow(snapshots, mid);
+            let snapshot = vector::borrow(snapshots, mid);
 
             // return early if we find an exact epoch
             if (epoch == snapshot.epoch) return (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b);
@@ -164,8 +155,8 @@ module vetoken::composable_vetoken {
             else high = mid
         };
 
-        snapshot = vector::borrow(snapshots, low - 1);
-        return (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b)
+        let snapshot = vector::borrow(snapshots, low - 1);
+        (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b)
     }
 
     #[view] /// Query for the ComposedVeToken2<CoinTypeA, CoinTypeB> balance of this account at a given epoch
