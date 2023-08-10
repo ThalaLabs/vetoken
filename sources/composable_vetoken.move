@@ -1,5 +1,6 @@
 module vetoken::composable_vetoken {
     use std::signer;
+    use aptos_std::smart_vector::{Self, SmartVector};
 
     use aptos_std::type_info;
 
@@ -21,15 +22,24 @@ module vetoken::composable_vetoken {
     const ERR_COMPOSABLE_VETOKEN2_EPOCH_DURATION_MISMATCH: u64 = 101;
     const ERR_COMPOSABLE_VETOKEN2_INVALID_WEIGHTS: u64 = 102;
     const ERR_COMPOSABLE_VETOKEN2_NONMUTABLE_WEIGHTS: u64 = 103;
+    const ERR_COMPOSABLE_VETOKEN2_INVALID_EPOCH: u64 = 104;
 
     ///
     /// Resources
     ///
 
+    struct WeightSnapshot has store {
+        weight_percent_coin_a: u128,
+        weight_percent_coin_b: u128,
+        epoch: u64,
+    }
+
     struct ComposedVeToken2<phantom CoinTypeA, phantom CoinTypeB> has key {
         weight_percent_coin_a: u128,
         weight_percent_coin_b: u128,
-        mutable_weights: bool
+        mutable_weights: bool,
+
+        weight_snapshots: SmartVector<WeightSnapshot>,
     }
 
     /// Create a ComposedVeToken2 over `CoinTypeA` and `CoinTypeB`. Only `CoinTypeA` is allowed to instantiate
@@ -53,7 +63,9 @@ module vetoken::composable_vetoken {
 
         // the owner of the first coin slot controls configuration for this `ComposedVeToken2`.
         assert!(account_address<CoinTypeA>() == signer::address_of(account), ERR_COMPOSABLE_VETOKEN2_COIN_ADDRESS_MISMATCH);
-        move_to(account, ComposedVeToken2<CoinTypeA, CoinTypeB> { weight_percent_coin_a, weight_percent_coin_b, mutable_weights });
+
+        let weight_snapshots = smart_vector::singleton(WeightSnapshot{weight_percent_coin_a, weight_percent_coin_b, epoch: vetoken::now_epoch<CoinTypeA>()});
+        move_to(account, ComposedVeToken2<CoinTypeA, CoinTypeB> { weight_percent_coin_a, weight_percent_coin_b, mutable_weights, weight_snapshots });
     }
 
     public entry fun update_weights<CoinTypeA, CoinTypeB>(account: &signer, weight_percent_coin_a: u128, weight_percent_coin_b: u128) acquires ComposedVeToken2 {
@@ -64,11 +76,22 @@ module vetoken::composable_vetoken {
         let composable_vetoken = borrow_global_mut<ComposedVeToken2<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>());
         assert!(composable_vetoken.mutable_weights, ERR_COMPOSABLE_VETOKEN2_NONMUTABLE_WEIGHTS);
 
+        let now_epoch = vetoken::now_epoch<CoinTypeA>();
+        let num_snapshots = smart_vector::length(&composable_vetoken.weight_snapshots);
+        let last_snapshot = smart_vector::borrow_mut(&mut composable_vetoken.weight_snapshots, num_snapshots - 1);
+        if (last_snapshot.epoch == now_epoch) {
+            last_snapshot.weight_percent_coin_a = weight_percent_coin_a;
+            last_snapshot.weight_percent_coin_b = weight_percent_coin_b;
+        } else {
+            let weights = WeightSnapshot{weight_percent_coin_a, weight_percent_coin_b, epoch: now_epoch};
+            smart_vector::push_back(&mut composable_vetoken.weight_snapshots, weights);
+        };
+
         composable_vetoken.weight_percent_coin_a = weight_percent_coin_a;
         composable_vetoken.weight_percent_coin_b = weight_percent_coin_b;
     }
 
-    #[view] /// Query for the weight configuration
+    #[view] /// Query for the current weight configuration
     public fun weight_percents<CoinTypeA, CoinTypeB>(): (u128, u128) acquires ComposedVeToken2 {
         let composable_vetoken = borrow_global<ComposedVeToken2<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>());
         (composable_vetoken.weight_percent_coin_a, composable_vetoken.weight_percent_coin_b)
@@ -97,6 +120,45 @@ module vetoken::composable_vetoken {
         past_weighted_underlying_total_supply<CoinTypeA, CoinTypeB>(vetoken::now_epoch<CoinTypeA>())
     }
 
+    #[view] /// Query for the latest weight configuration at a given epoch
+    public fun past_weight_percents<CoinTypeA, CoinTypeB>(epoch: u64): (u128, u128) acquires ComposedVeToken2 {
+        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
+
+        let composable_vetoken = borrow_global<ComposedVeToken2<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>());
+        let snapshots = &composable_vetoken.weight_snapshots;
+        let num_snapshots = smart_vector::length(snapshots);
+
+        // Check if the latest snapshot suffices
+        let snapshot = smart_vector::borrow(snapshots, num_snapshots - 1);
+        if (epoch >= snapshot.epoch) return (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b);
+
+        // Check if the first snapshot sufficies or the supplied epoch is too far in the past
+        let snapshot = smart_vector::borrow(snapshots, 0);
+        if (epoch < snapshot.epoch) return (0, 0)
+        else if (epoch == snapshot.epoch) return (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b);
+
+        // Binary search a snapshot where the epoch is the highest behind the target epoch. The checks
+        // before reaching this search ensures that the supplied epoch is in range of [low, hi]
+        //
+        // NOTE: If we reach the terminating condition, low >= hi, then that indicates the index
+        // (low - 1) is the right snapshot with the highest epoch below the target
+        let low = 0;
+        let high = num_snapshots - 1;
+        while (low < high) {
+            let mid = (low + high) / 2;
+            let snapshot = smart_vector::borrow(snapshots, mid);
+
+            // return early if we find an exact epoch
+            if (epoch == snapshot.epoch) return (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b);
+
+            if (epoch > snapshot.epoch) low = mid + 1
+            else high = mid
+        };
+
+        let snapshot = smart_vector::borrow(snapshots, low - 1);
+        (snapshot.weight_percent_coin_a, snapshot.weight_percent_coin_b)
+    }
+
     #[view] /// Query for the ComposedVeToken2<CoinTypeA, CoinTypeB> balance of this account at a given epoch
     public fun past_balance<CoinTypeA, CoinTypeB>(account_addr: address, epoch: u64): u128 acquires ComposedVeToken2 {
         assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
@@ -108,7 +170,7 @@ module vetoken::composable_vetoken {
         let balance_b = (vetoken::past_balance<CoinTypeB>(account_addr, epoch) as u128);
 
         // Apply Multipliers
-        let (weight_percent_coin_a, weight_percent_coin_b) = weight_percents<CoinTypeA, CoinTypeB>();
+        let (weight_percent_coin_a, weight_percent_coin_b) = past_weight_percents<CoinTypeA, CoinTypeB>(epoch);
         ((balance_a * weight_percent_coin_a) + (balance_b * weight_percent_coin_b)) / 100
     }
 
@@ -135,8 +197,7 @@ module vetoken::composable_vetoken {
         (total_supply_a * weight_percent_coin_a, total_supply_b * weight_percent_coin_b)
     }
 
-    #[view]
-    /// Return the total amount of `DividendCoin` claimable for two types of underlying VeToken
+    #[view] /// Return the total amount of `DividendCoin` claimable for two types of underlying VeToken
     public fun claimable<CoinTypeA, CoinTypeB, DividendCoin>(account_addr: address): u64 {
         dividend_distributor::claimable<CoinTypeA, DividendCoin>(account_addr) + dividend_distributor::claimable<CoinTypeB, DividendCoin>(account_addr)
     }
@@ -146,8 +207,7 @@ module vetoken::composable_vetoken {
         exists<ComposedVeToken2<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>())
     }
 
-    #[view]
-    /// For frontend use case: we want to know what the balance will be after increasing lock amount / duration
+    #[view] /// For frontend use case: we want to know what the balance will be after increasing lock amount / duration
     public fun preview_balance_after_increase<CoinTypeA, CoinTypeB>(account_addr: address, amount_a: u64, increment_epochs_a: u64, amount_b: u64, increment_epochs_b: u64): u128 acquires ComposedVeToken2 {
         assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
 
@@ -252,6 +312,71 @@ module vetoken::composable_vetoken {
         let (weight_a, weight_b) = weight_percents<FakeCoinA, FakeCoinB>();
         assert!(weight_a == 33, 0);
         assert!(weight_b == 67, 0);
+
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    fun composable_vetoken_past_weight_configuration_ok(aptos_framework: &signer, vetoken: &signer) acquires ComposedVeToken2 {
+        initialize_for_test(aptos_framework, vetoken, 1, 4);
+
+        // Epoch 0 holds no weight configuration
+
+        // Epoch 5
+        timestamp::fast_forward_seconds(5*vetoken::seconds_in_epoch<FakeCoinA>());
+        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
+        update_weights<FakeCoinA, FakeCoinB>(vetoken, 33, 67); // changed in the same epoch
+
+        // Epoch 10
+        timestamp::fast_forward_seconds(5*vetoken::seconds_in_epoch<FakeCoinA>());
+        update_weights<FakeCoinA, FakeCoinB>(vetoken, 50, 50);
+
+        // Epoch 20
+        timestamp::fast_forward_seconds(10*vetoken::seconds_in_epoch<FakeCoinA>());
+        update_weights<FakeCoinA, FakeCoinB>(vetoken, 80, 20);
+
+        // Epoch [0, 4]
+        {
+            let (i, end) = (0, 4);
+            while (i <= end) {
+                let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(i);
+                assert!(weight_a == 0, 0);
+                assert!(weight_b == 0, 0);
+                i = i + 1;
+            }
+        };
+
+        // Epoch [5, 9]
+        {
+            let (i, end) = (5, 9);
+            while (i <= end) {
+                let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(i);
+                assert!(weight_a == 33, 0);
+                assert!(weight_b == 67, 0);
+                i = i + 1;
+            }
+        };
+
+        // Epoch [10, 19]
+        {
+            let (i, end) = (10, 19);
+            while (i <= end) {
+                let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(i);
+                assert!(weight_a == 50, 0);
+                assert!(weight_b == 50, 0);
+                i = i + 1;
+            }
+        };
+
+        // Epoch [20, 100]
+        {
+            let (i, end) = (20, 100);
+            while (i <= end) {
+                let (weight_a, weight_b) = past_weight_percents<FakeCoinA, FakeCoinB>(i);
+                assert!(weight_a == 80, 0);
+                assert!(weight_b == 20, 0);
+                i = i + 1;
+            }
+        };
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
@@ -307,6 +432,44 @@ module vetoken::composable_vetoken {
         // Only half of FakeCoinB contributes to the total balance
         assert!(balance<FakeCoinA, FakeCoinB>(@0xA) == 375, 0);
         assert!((balance<FakeCoinA, FakeCoinB>(@0xA) as u128) == preview_balance, 0);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    fun composable_vetoken_past_balance_ok(aptos_framework: &signer, vetoken: &signer) acquires ComposedVeToken2 {
+        initialize_for_test(aptos_framework, vetoken, 1, 4);
+        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
+
+        // lock the same amounts for both coins
+        let account = &account::create_account_for_test(@0xA);
+        let preview_balance = preview_balance_after_increase<FakeCoinA, FakeCoinB>(@0xA, 1000, 2, 1000, 2);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), 2);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinB>(vetoken, 1000), 2);
+        assert!(vetoken::balance<FakeCoinA>(@0xA) == 500, 0);
+        assert!(vetoken::balance<FakeCoinB>(@0xA) == 500, 0);
+
+        // Only half of FakeCoinB contributes to the total balance
+        assert!(balance<FakeCoinA, FakeCoinB>(@0xA) == 750, 0);
+        assert!(preview_balance == 750, 0);
+
+        // Move into Epoch 1. Update weights such that both balances contribute equally
+        timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeCoinA>());
+        update_weights<FakeCoinA, FakeCoinB>(vetoken, 100, 100);
+
+        // Epoch 0 stays the same with old weights
+        assert!(past_balance<FakeCoinA, FakeCoinB>(@0xA, 0) == 750, 0);
+
+        // balances decay in half. Both balances contribute equally. In this Epoch
+        assert!(vetoken::balance<FakeCoinA>(@0xA) == 250, 0);
+        assert!(vetoken::balance<FakeCoinB>(@0xA) == 250, 0);
+        assert!(past_balance<FakeCoinA, FakeCoinB>(@0xA, 1) == 500, 0);
+
+        // Move into Epoch 2. Balances are unlocked
+        timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeCoinA>());
+        update_weights<FakeCoinA, FakeCoinB>(vetoken, 100, 50);
+
+        assert!(past_balance<FakeCoinA, FakeCoinB>(@0xA, 0) == 750, 0);
+        assert!(past_balance<FakeCoinA, FakeCoinB>(@0xA, 1) == 500, 0);
+        assert!(past_balance<FakeCoinA, FakeCoinB>(@0xA, 2) == 0, 0);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
