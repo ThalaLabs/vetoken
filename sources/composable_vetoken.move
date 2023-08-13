@@ -192,7 +192,7 @@ module vetoken::composable_vetoken {
         let total_supply_b = vetoken::past_total_supply<CoinTypeB>(epoch);
 
         // Apply Mutlipliers
-        let (weight_percent_coin_a, weight_percent_coin_b) = weight_percents<CoinTypeA, CoinTypeB>();
+        let (weight_percent_coin_a, weight_percent_coin_b) = past_weight_percents<CoinTypeA, CoinTypeB>(epoch);
         (total_supply_a * (weight_percent_coin_a as u128), total_supply_b * (weight_percent_coin_b as u128))
     }
 
