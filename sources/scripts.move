@@ -38,11 +38,8 @@ module vetoken::scripts {
 
     public entry fun claim<LockCoin, DividendCoin>(account: &signer) {
         let dividend = dividend_distributor::claim<LockCoin, DividendCoin>(account);
-        let account_addr = signer::address_of(account);
-        if (!coin::is_account_registered<DividendCoin>(account_addr)) {
-            coin::register<DividendCoin>(account);
-        };
-        coin::deposit<DividendCoin>(account_addr, dividend);
+        coin::register<DividendCoin>(account);
+        coin::deposit<DividendCoin>(signer::address_of(account), dividend);
     }
 
     public entry fun unlock_composed<LockCoinA, LockCoinB>(account: &signer) {
@@ -58,9 +55,8 @@ module vetoken::scripts {
     public entry fun claim_composed<LockCoinA, LockCoinB, DividendCoin>(account: &signer) {
         let dividend = dividend_distributor::claim<LockCoinA, DividendCoin>(account);
         coin::merge(&mut dividend, dividend_distributor::claim<LockCoinB, DividendCoin>(account));
-        let account_addr = signer::address_of(account);
         coin::register<DividendCoin>(account);
-        coin::deposit<DividendCoin>(account_addr, dividend);
+        coin::deposit<DividendCoin>(signer::address_of(account), dividend);
     }
 
     /// Claim up to 10 dividend coins in 1 tx
