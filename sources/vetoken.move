@@ -334,7 +334,7 @@ module vetoken::vetoken {
 
     #[view]
     public fun unnormalized_past_total_supply<CoinType>(epoch: u64): u128 acquires VeTokenInfo {
-        assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
+        if (!initialized<CoinType>()) return 0;
         assert!(epoch <= now_epoch<CoinType>(), ERR_VETOKEN_INVALID_PAST_EPOCH);
 
         let vetoken_info = borrow_global<VeTokenInfo<CoinType>>(account_address<CoinType>());
@@ -348,7 +348,7 @@ module vetoken::vetoken {
 
     #[view]
     public fun unnormalized_past_balance<CoinType>(account_addr: address, epoch: u64): u128 acquires VeTokenStore, VeTokenInfo {
-        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
+        if (!is_account_registered<CoinType>(account_addr)) return 0;
         assert!(epoch <= now_epoch<CoinType>(), ERR_VETOKEN_INVALID_PAST_EPOCH);
 
         let vetoken_store = borrow_global<VeTokenStore<CoinType>>(account_addr);
@@ -364,7 +364,7 @@ module vetoken::vetoken {
 
     #[view]
     public fun unnormalized_past_delegated_balance<CoinType>(account_addr: address, epoch: u64): u128 acquires VeTokenInfo, VeTokenDelegations {
-        assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
+        if (!is_account_registered<CoinType>(account_addr)) return 0;
         assert!(epoch <= now_epoch<CoinType>(), ERR_VETOKEN_INVALID_PAST_EPOCH);
 
         let delegate_store = borrow_global<VeTokenDelegations<CoinType>>(account_addr);
