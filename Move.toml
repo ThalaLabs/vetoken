@@ -3,15 +3,15 @@ name = "VeToken"
 version = "0.0.0"
 
 [addresses]
-vetoken = "167f411fc5a678fb40d86e0af646fa8f62458b686ad8996215248447037af40c"
-vetoken_deployer = "5eac263e3e06cb194fae18544ef3d5c5056c4cbd43473c70823cb199f2059f37"
+vetoken = "24f0bc3bb8ce5c54bcffa32ab097e2a6da5de6f5a7cba040f96bb0d39e7cfdcb"
+vetoken_deployer = "da1417c9e3311197bac991c58dbdebc2c88764234593262156535dba33113d16"
 
 [dependencies.AptosFramework]
 git = "https://github.com/aptos-labs/aptos-core.git"
 subdir = "aptos-move/framework/aptos-framework"
 rev = "mainnet"
 
-[dependencies.ThalaManager]
-git = "https://github.com/ThalaLabs/thala-modules.git"
-subdir = "thala_manager"
-rev = "main"
+#[dependencies.ThalaManager]
+#git = "https://github.com/ThalaLabs/thala-modules.git"
+#subdir = "thala_manager"
+#rev = "main"
