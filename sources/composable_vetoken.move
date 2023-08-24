@@ -64,7 +64,7 @@ module vetoken::composable_vetoken {
         assert!(account_address<CoinTypeA>() == signer::address_of(account), ERR_COMPOSABLE_VETOKEN2_COIN_ADDRESS_MISMATCH);
 
         let multiplier_snapshots = smart_vector::singleton(
-            MultiplierSnapshot {multiplier_percent_a, multiplier_percent_b, epoch: vetoken::now_epoch<CoinTypeA>()});
+            MultiplierSnapshot {multiplier_percent_a, multiplier_percent_b, epoch: now_epoch<CoinTypeA, CoinTypeB>()});
         move_to(account, ComposedVeToken2<CoinTypeA, CoinTypeB> { multiplier_percent_a, multiplier_percent_b, mutable_multipliers, multiplier_snapshots: multiplier_snapshots });
     }
 
@@ -76,7 +76,7 @@ module vetoken::composable_vetoken {
         let composable_vetoken = borrow_global_mut<ComposedVeToken2<CoinTypeA, CoinTypeB>>(account_address<CoinTypeA>());
         assert!(composable_vetoken.mutable_multipliers, ERR_COMPOSABLE_VETOKEN2_IMMUTABLE_MULTIPLIERS);
 
-        let now_epoch = vetoken::now_epoch<CoinTypeA>();
+        let now_epoch = now_epoch<CoinTypeA, CoinTypeB>();
         let num_snapshots = smart_vector::length(&composable_vetoken.multiplier_snapshots);
         let last_snapshot = smart_vector::borrow_mut(&mut composable_vetoken.multiplier_snapshots, num_snapshots - 1);
         if (last_snapshot.epoch == now_epoch) {
@@ -100,14 +100,19 @@ module vetoken::composable_vetoken {
     public fun balance<CoinTypeA, CoinTypeB>(account_addr: address): u128 acquires ComposedVeToken2 {
         // The epochs are the same between `CoinTypeA` & `CoinTypeB` since `initialize`
         // would fail if the epoch durations did not match
-        past_balance<CoinTypeA, CoinTypeB>(account_addr, vetoken::now_epoch<CoinTypeA>())
+        past_balance<CoinTypeA, CoinTypeB>(account_addr, now_epoch<CoinTypeA, CoinTypeB>())
+    }
+
+    #[view] /// Returns the total delegated balance. If self-delegating, the account's balance is also included
+    public fun delegated_balance<CoinTypeA, CoinTypeB>(account_addr: address): u128 acquires ComposedVeToken2 {
+        past_delegated_balance<CoinTypeA, CoinTypeB>(account_addr, now_epoch<CoinTypeA, CoinTypeB>())
     }
 
     #[view] /// Query for the current ComposedVeToken2<CoinTypeA, CoinTypeB> total supply
     public fun total_supply<CoinTypeA, CoinTypeB>(): u128 acquires ComposedVeToken2 {
         // The epochs are the same between `CoinTypeA` & `CoinTypeB` since `initialize`
         // would fail if the epoch durations did not match
-        past_total_supply<CoinTypeA, CoinTypeB>(vetoken::now_epoch<CoinTypeA>())
+        past_total_supply<CoinTypeA, CoinTypeB>(now_epoch<CoinTypeA, CoinTypeB>())
     }
 
     #[view]
@@ -116,7 +121,7 @@ module vetoken::composable_vetoken {
     public fun multiplied_underlying_total_supply<CoinTypeA, CoinTypeB>(): (u128, u128) acquires ComposedVeToken2 {
         // The epochs are the same between `CoinTypeA` & `CoinTypeB` since `initialize`
         // would fail if the epoch durations did not match
-        past_multiplied_underlying_total_supply<CoinTypeA, CoinTypeB>(vetoken::now_epoch<CoinTypeA>())
+        past_multiplied_underlying_total_supply<CoinTypeA, CoinTypeB>(now_epoch<CoinTypeA, CoinTypeB>())
     }
 
     #[view] /// Query for the latest multiplier configuration at a given epoch
@@ -173,6 +178,21 @@ module vetoken::composable_vetoken {
         ((balance_a * (multiplier_percent_a as u128)) + (balance_b * (multiplier_percent_b as u128))) / 100
     }
 
+    #[view] /// Returns the total delegated balance at a given epoch. If self-delegating, the account's balance is also included
+    public fun past_delegated_balance<CoinTypeA, CoinTypeB>(account_addr: address, epoch: u64): u128 acquires ComposedVeToken2 {
+        assert!(initialized<CoinTypeA, CoinTypeB>(), ERR_COMPOSABLE_VETOKEN2_UNINITIALIZED);
+
+        // VeToken<CoinTypeA> Component
+        let balance_a = (vetoken::past_delegated_balance<CoinTypeA>(account_addr, epoch) as u128);
+
+        // VeToken<CoinTypeB> Component
+        let balance_b = (vetoken::past_delegated_balance<CoinTypeB>(account_addr, epoch) as u128);
+
+        // Apply Multipliers
+        let (multiplier_percent_a, multiplier_percent_b) = past_multiplier_percents<CoinTypeA, CoinTypeB>(epoch);
+        ((balance_a * (multiplier_percent_a as u128)) + (balance_b * (multiplier_percent_b as u128))) / 100
+    }
+
     #[view] /// Query for the ComposedVeToken2<CoinTypeA, CoinTypeB> total supply at a given epoch
     public fun past_total_supply<CoinTypeA, CoinTypeB>(epoch: u64): u128 acquires ComposedVeToken2 {
         let (multiplied_total_supply_a, multiplied_total_supply_b) = past_multiplied_underlying_total_supply<CoinTypeA, CoinTypeB>(epoch);
@@ -219,6 +239,16 @@ module vetoken::composable_vetoken {
         // Apply Multipliers
         let (multiplier_percent_a, multiplier_percent_b) = multiplier_percents<CoinTypeA, CoinTypeB>();
         ((balance_a * (multiplier_percent_a as u128)) + (balance_b * (multiplier_percent_b as u128))) / 100
+    }
+
+    #[view]
+    public fun is_account_registered<CoinTypeA, CoinTypeB>(account_addr: address): bool {
+        vetoken::is_account_registered<CoinTypeA>(account_addr)
+    }
+
+    #[view]
+    public fun now_epoch<CoinTypeA, CoinTypeB>(): u64 {
+        vetoken::now_epoch<CoinTypeA>()
     }
 
     // Internal Helpers
@@ -469,6 +499,53 @@ module vetoken::composable_vetoken {
         assert!(past_balance<FakeCoinA, FakeCoinB>(@0xA, 0) == 750, 0);
         assert!(past_balance<FakeCoinA, FakeCoinB>(@0xA, 1) == 500, 0);
         assert!(past_balance<FakeCoinA, FakeCoinB>(@0xA, 2) == 0, 0);
+    }
+
+    #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
+    fun composable_vetoken_past_delegated_balance_ok(aptos_framework: &signer, vetoken: &signer) acquires ComposedVeToken2 {
+        initialize_for_test(aptos_framework, vetoken, 1, 4);
+        initialize<FakeCoinA, FakeCoinB>(vetoken, 100, 50, true);
+
+        // lock the same amounts for both coins
+        let account = &account::create_account_for_test(@0xA);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinA>(vetoken, 1000), 2);
+        vetoken::lock(account, coin_test::mint_coin<FakeCoinB>(vetoken, 1000), 2);
+        assert!(vetoken::balance<FakeCoinA>(@0xA) == 500, 0);
+        assert!(vetoken::balance<FakeCoinB>(@0xA) == 500, 0);
+
+        // Account is self-delegating to start
+        assert!(balance<FakeCoinA, FakeCoinB>(@0xA) == 750, 0);
+        assert!(delegated_balance<FakeCoinA, FakeCoinB>(@0xA) == 750, 0);
+
+        // Move into Epoch 1. Update multipliers such that both balances contribute equally
+        timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeCoinA>());
+        update_multipliers<FakeCoinA, FakeCoinB>(vetoken, 100, 100);
+
+        // Account delegates FakeCoinA to another acccount 0xB
+        vetoken::register<FakeCoinA>(&account::create_account_for_test(@0xB));
+        vetoken::delegate_to<FakeCoinA>(account, @0xB);
+
+        assert!(balance<FakeCoinA, FakeCoinB>(@0xA) == 500, 0);
+        assert!(delegated_balance<FakeCoinA, FakeCoinB>(@0xA) == 250, 0); // FakeCoinA is delegated
+
+        assert!(balance<FakeCoinA, FakeCoinB>(@0xB) == 0, 0);
+        assert!(delegated_balance<FakeCoinA, FakeCoinB>(@0xB) == 250, 0); // Received delegation
+
+        // Move into Epoch 2. Tokens are unlocked
+        timestamp::fast_forward_seconds(vetoken::seconds_in_epoch<FakeCoinA>());
+
+        assert!(balance<FakeCoinA, FakeCoinB>(@0xA) == 0, 0);
+        assert!(balance<FakeCoinA, FakeCoinB>(@0xB) == 0, 0);
+        assert!(delegated_balance<FakeCoinA, FakeCoinB>(@0xA) == 0, 0);
+        assert!(delegated_balance<FakeCoinA, FakeCoinB>(@0xB) == 0, 0);
+
+
+        // Past Delegations are held
+        assert!(past_delegated_balance<FakeCoinA, FakeCoinB>(@0xA, 0) == 750, 0);
+        assert!(past_delegated_balance<FakeCoinA, FakeCoinB>(@0xB, 0) == 0, 0);
+
+        assert!(past_delegated_balance<FakeCoinA, FakeCoinB>(@0xA, 1) == 250, 0);
+        assert!(past_delegated_balance<FakeCoinA, FakeCoinB>(@0xB, 1) == 250, 0);
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
