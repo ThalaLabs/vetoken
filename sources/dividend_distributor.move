@@ -201,11 +201,12 @@ module vetoken::dividend_distributor {
 
     #[test_only]
     fun initialize_for_test(aptos_framework: &signer, vetoken: &signer, min_locked_epochs: u64, max_locked_epochs: u64) {
+        account::create_account_for_test(signer::address_of(vetoken));
+
         coin_test::initialize_fake_coin<FakeLockCoin>(vetoken);
         coin_test::initialize_fake_coin<FakeDividendCoin>(vetoken);
         vetoken::initialize<FakeLockCoin>(vetoken, min_locked_epochs, max_locked_epochs, 7 * 24 * 60 * 60);
         timestamp::set_time_has_started_for_testing(aptos_framework);
-        account::create_account_for_test(signer::address_of(vetoken));
         initialize<FakeLockCoin, FakeDividendCoin>(vetoken);
     }
 

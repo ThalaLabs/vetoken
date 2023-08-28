@@ -3,8 +3,10 @@ module vetoken::vetoken {
 
     use aptos_std::smart_table::{Self, SmartTable};
     use aptos_std::type_info;
+    use aptos_std::event::{Self, EventHandle};
     use aptos_framework::coin::{Self, Coin};
     use aptos_framework::timestamp;
+    use aptos_framework::account;
 
     ///
     /// Errors
@@ -75,7 +77,47 @@ module vetoken::vetoken {
         /// Stores the total supply for a given epoch i, updated as vetokens are locked. The value
         /// store is "unnormalized" meaning the (1/max_locked_epochs) factor is left out.
         unnormalized_total_supply: SmartTable<u64, u128>,
+        
+        // Stores events to be emitted on VeToken actions
+        events: VeTokenEvents<CoinType>,
     }
+
+    struct VeTokenEvents<phantom CoinType> has key, store {  
+        lock_events: EventHandle<VeTokenLockEvent<CoinType>>, 
+        update_events: EventHandle<VeTokenUpdateEvent<CoinType>>,
+        unlock_events: EventHandle<VeTokenUnlockEvent<CoinType>>,  
+        delegate_events: EventHandle<VeTokenDelegateEvent<CoinType>>
+    }
+
+    struct VeTokenLockEvent<phantom CoinType> has drop, store {  
+        epoch: u64,  
+        locked_amount: u128,
+        locked_epochs: u64,
+        unlockable_epoch: u64
+    }
+
+    struct VeTokenUpdateEvent<phantom CoinType> has drop, store {  
+        epoch: u64,  
+        previously_locked_amount: u128,
+        locked_amount: u128,
+        peviously_unlockable_epoch: u64,
+        unlockable_epoch: u64
+    }  
+
+    struct VeTokenUnlockEvent<phantom CoinType> has drop, store {  
+        epoch: u64,  
+        unlocked_amount: u128,
+        unlockable_epoch: u64
+    }
+
+    struct VeTokenDelegateEvent<phantom CoinType> has drop, store {  
+        epoch: u64,  
+        delegated_amount: u128,
+        unlockable_epoch: u64,
+        delegate_from: address,
+        delegate_to: address,
+    }
+
 
     /// Initialize a `VeToken` based on `CoinType`. The parameters set on the VeToken are not changeable after init.
     ///
@@ -99,6 +141,12 @@ module vetoken::vetoken {
             max_locked_epochs,
             epoch_duration_seconds,
             unnormalized_total_supply: smart_table::new(),
+            events: VeTokenEvents<CoinType> {
+                lock_events: account::new_event_handle<VeTokenLockEvent<CoinType>>(account),
+                update_events: account::new_event_handle<VeTokenUpdateEvent<CoinType>>(account),
+                unlock_events: account::new_event_handle<VeTokenUnlockEvent<CoinType>>(account),
+                delegate_events: account::new_event_handle<VeTokenDelegateEvent<CoinType>>(account),
+            }
         });
     }
 
@@ -155,6 +203,15 @@ module vetoken::vetoken {
 
             epoch = epoch + 1;
         };
+
+        event::emit_event<VeTokenLockEvent<CoinType>>(
+            &mut vetoken_info.events.lock_events, VeTokenLockEvent {
+                epoch: now_epoch,
+                locked_amount: amount,
+                locked_epochs,
+                unlockable_epoch
+            }
+        );
 
         // Update the VeToken
         vetoken_store.vetoken.unlockable_epoch = unlockable_epoch;
@@ -223,6 +280,16 @@ module vetoken::vetoken {
             epoch = epoch + 1;
         };
 
+        event::emit_event<VeTokenUpdateEvent<CoinType>>(
+            &mut vetoken_info.events.update_events, VeTokenUpdateEvent {
+                epoch: now_epoch,
+                previously_locked_amount: locked_amount,
+                locked_amount: locked_amount + added_amount,
+                peviously_unlockable_epoch: old_unlockable_epoch,
+                unlockable_epoch: new_unlockable_epoch
+            }
+        );
+
         vetoken_store.vetoken.unlockable_epoch = new_unlockable_epoch;
         coin::merge(&mut vetoken_store.vetoken.locked, coin);
     }
@@ -234,7 +301,17 @@ module vetoken::vetoken {
 
         assert!(can_unlock<CoinType>(account_addr), ERR_VETOKEN_CANNOT_UNLOCK);
 
+        let epoch = now_epoch<CoinType>();
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
+        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
+
+        event::emit_event<VeTokenUnlockEvent<CoinType>>(
+            &mut vetoken_info.events.unlock_events, VeTokenUnlockEvent {
+                epoch,  
+                unlocked_amount: (coin::value(&vetoken_store.vetoken.locked) as u128),
+                unlockable_epoch: vetoken_store.vetoken.unlockable_epoch
+            }
+        );
 
         // Update the VeToken
         vetoken_store.vetoken.unlockable_epoch = 0;
@@ -278,6 +355,18 @@ module vetoken::vetoken {
 
             epoch = epoch + 1;
         };
+
+        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
+
+        event::emit_event<VeTokenDelegateEvent<CoinType>>(
+            &mut vetoken_info.events.delegate_events, VeTokenDelegateEvent {
+                epoch,  
+                delegated_amount: locked_amount,
+                unlockable_epoch: vetoken_store.vetoken.unlockable_epoch,
+                delegate_from: account_addr,
+                delegate_to: delegate,
+            }
+        );
 
         // Update VeTokenStore
         vetoken_store.delegate_to = delegate;
@@ -447,9 +536,6 @@ module vetoken::vetoken {
     use vetoken::coin_test;
 
     #[test_only]
-    use aptos_framework::account;
-
-    #[test_only]
     struct FakeCoin {}
 
     #[test_only]
@@ -457,6 +543,7 @@ module vetoken::vetoken {
 
     #[test_only]
     fun initialize_for_test(aptos_framework: &signer, vetoken: &signer, min_locked_epochs: u64, max_locked_epochs: u64) {
+        account::create_account_for_test(signer::address_of(vetoken));
         initialize<FakeCoin>(vetoken, min_locked_epochs, max_locked_epochs, SECONDS_IN_WEEK);
         timestamp::set_time_has_started_for_testing(aptos_framework);
         coin_test::initialize_fake_coin_with_decimals<FakeCoin>(vetoken, 8);
