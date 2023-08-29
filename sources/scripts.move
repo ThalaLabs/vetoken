@@ -10,6 +10,8 @@ module vetoken::scripts {
     /// NullDividend is used to indicate that the dividend coin type is not present
     struct NullDividend {}
 
+    // vetoken entry functions
+
     public entry fun lock<CoinType>(account: &signer, amount: u64, epochs: u64) {
         let coin = coin::withdraw<CoinType>(account, amount);
         vetoken::lock(account, coin, epochs);
@@ -36,11 +38,20 @@ module vetoken::scripts {
         vetoken::lock(account, unlocked_coin, epochs);
     }
 
+    // dividend distributor entry functions
+
+    public entry fun distribute<LockCoin, DividendCoin>(account: &signer, dividend_amount: u64) {
+        let dividend = coin::withdraw<DividendCoin>(account, dividend_amount);
+        dividend_distributor::distribute<LockCoin, DividendCoin>(dividend);
+    }
+
     public entry fun claim<LockCoin, DividendCoin>(account: &signer) {
         let dividend = dividend_distributor::claim<LockCoin, DividendCoin>(account);
         coin::register<DividendCoin>(account);
         coin::deposit<DividendCoin>(signer::address_of(account), dividend);
     }
+
+    // composable vetoken entry functions
 
     public entry fun unlock_composed<LockCoinA, LockCoinB>(account: &signer) {
         let account_addr = signer::address_of(account);
@@ -93,6 +104,8 @@ module vetoken::scripts {
             claim_composed<LockCoinA, LockCoinB, T9>(account);
         };
     }
+
+    // internal helpers
     
     fun is_null<CoinType>(): bool {
         type_info::type_of<CoinType>() == type_info::type_of<NullDividend>()
