@@ -243,11 +243,13 @@ module vetoken::composable_vetoken {
 
     #[view]
     public fun is_account_registered<CoinTypeA, CoinTypeB>(account_addr: address): bool {
-        vetoken::is_account_registered<CoinTypeA>(account_addr)
+        vetoken::is_account_registered<CoinTypeA>(account_addr) && vetoken::is_account_registered<CoinTypeB>(account_addr)
     }
 
     #[view]
     public fun now_epoch<CoinTypeA, CoinTypeB>(): u64 {
+        // Since we enforce the saame epoch duration between the two cointypes,
+        // we can simply refer to the epoch number for CoinTypeA
         vetoken::now_epoch<CoinTypeA>()
     }
 
