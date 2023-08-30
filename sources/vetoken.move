@@ -140,11 +140,11 @@ module vetoken::vetoken {
             unnormalized_total_supply: smart_table::new(),
         });
         move_to(account, VeTokenEvents<CoinType> {
-                lock_events: account::new_event_handle<VeTokenLockEvent<CoinType>>(account),
-                update_events: account::new_event_handle<VeTokenUpdateEvent<CoinType>>(account),
-                unlock_events: account::new_event_handle<VeTokenUnlockEvent<CoinType>>(account),
-                delegate_events: account::new_event_handle<VeTokenDelegateEvent<CoinType>>(account),
-            })
+            lock_events: account::new_event_handle<VeTokenLockEvent<CoinType>>(account),
+            update_events: account::new_event_handle<VeTokenUpdateEvent<CoinType>>(account),
+            unlock_events: account::new_event_handle<VeTokenUnlockEvent<CoinType>>(account),
+            delegate_events: account::new_event_handle<VeTokenDelegateEvent<CoinType>>(account),
+        })
     }
 
     /// Register `account` to be able to hold `VeToken<CoinType>`.
@@ -201,9 +201,9 @@ module vetoken::vetoken {
             epoch = epoch + 1;
         };
 
-        let event_info = borrow_global_mut<VeTokenEvents<CoinType>>(account_address<CoinType>());
+        let events = borrow_global_mut<VeTokenEvents<CoinType>>(account_address<CoinType>());
         event::emit_event<VeTokenLockEvent<CoinType>>(
-            &mut event_info.lock_events, VeTokenLockEvent {
+            &mut events.lock_events, VeTokenLockEvent {
                 epoch: now_epoch,
                 locked_amount: amount,
                 locked_epochs,
@@ -278,9 +278,9 @@ module vetoken::vetoken {
             epoch = epoch + 1;
         };
 
-        let event_info = borrow_global_mut<VeTokenEvents<CoinType>>(account_address<CoinType>());
+        let events = borrow_global_mut<VeTokenEvents<CoinType>>(account_address<CoinType>());
         event::emit_event<VeTokenUpdateEvent<CoinType>>(
-            &mut event_info.update_events, VeTokenUpdateEvent {
+            &mut events.update_events, VeTokenUpdateEvent {
                 epoch: now_epoch,
                 prev_locked_amount: locked_amount,
                 locked_amount: locked_amount + added_amount,
@@ -303,9 +303,9 @@ module vetoken::vetoken {
         let epoch = now_epoch<CoinType>();
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
 
-        let event_info = borrow_global_mut<VeTokenEvents<CoinType>>(account_address<CoinType>());
+        let events = borrow_global_mut<VeTokenEvents<CoinType>>(account_address<CoinType>());
         event::emit_event<VeTokenUnlockEvent<CoinType>>(
-            &mut event_info.unlock_events, VeTokenUnlockEvent {
+            &mut events.unlock_events, VeTokenUnlockEvent {
                 epoch,  
                 unlocked_amount: (coin::value(&vetoken_store.vetoken.locked) as u128),
                 unlockable_epoch: vetoken_store.vetoken.unlockable_epoch
@@ -355,10 +355,10 @@ module vetoken::vetoken {
             epoch = epoch + 1;
         };
 
-        let event_info = borrow_global_mut<VeTokenEvents<CoinType>>(account_address<CoinType>());
+        let events = borrow_global_mut<VeTokenEvents<CoinType>>(account_address<CoinType>());
 
         event::emit_event<VeTokenDelegateEvent<CoinType>>(
-            &mut event_info.delegate_events, VeTokenDelegateEvent {
+            &mut events.delegate_events, VeTokenDelegateEvent {
                 epoch,  
                 delegated_amount: locked_amount,
                 unlockable_epoch: vetoken_store.vetoken.unlockable_epoch,
