@@ -77,9 +77,6 @@ module vetoken::vetoken {
         /// Stores the total supply for a given epoch i, updated as vetokens are locked. The value
         /// store is "unnormalized" meaning the (1/max_locked_epochs) factor is left out.
         unnormalized_total_supply: SmartTable<u64, u128>,
-        
-        // Stores events to be emitted on VeToken actions
-        events: VeTokenEvents<CoinType>,
     }
 
     struct VeTokenEvents<phantom CoinType> has key, store {  
@@ -98,7 +95,7 @@ module vetoken::vetoken {
 
     struct VeTokenUpdateEvent<phantom CoinType> has drop, store {  
         epoch: u64,  
-        previously_locked_amount: u128,
+        prev_locked_amount: u128,
         locked_amount: u128,
         peviously_unlockable_epoch: u64,
         unlockable_epoch: u64
@@ -141,13 +138,13 @@ module vetoken::vetoken {
             max_locked_epochs,
             epoch_duration_seconds,
             unnormalized_total_supply: smart_table::new(),
-            events: VeTokenEvents<CoinType> {
+        });
+        move_to(account, VeTokenEvents<CoinType> {
                 lock_events: account::new_event_handle<VeTokenLockEvent<CoinType>>(account),
                 update_events: account::new_event_handle<VeTokenUpdateEvent<CoinType>>(account),
                 unlock_events: account::new_event_handle<VeTokenUnlockEvent<CoinType>>(account),
                 delegate_events: account::new_event_handle<VeTokenDelegateEvent<CoinType>>(account),
-            }
-        });
+            })
     }
 
     /// Register `account` to be able to hold `VeToken<CoinType>`.
@@ -165,7 +162,7 @@ module vetoken::vetoken {
     /// Lock `CoinType` for `locked_epochs`. Time is referenced in terms of the epoch number in order to keep an accurate
     /// total supply of `VeToken` on an epoch basis. This implies that locked tokens are only eligible to be unlocked
     /// at the start of a new epoch.
-    public fun lock<CoinType>(account: &signer, coin: Coin<CoinType>, locked_epochs: u64) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    public fun lock<CoinType>(account: &signer, coin: Coin<CoinType>, locked_epochs: u64) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         let account_addr = signer::address_of(account);
         if (!is_account_registered<CoinType>(account_addr)) {
             register<CoinType>(account);
@@ -204,8 +201,9 @@ module vetoken::vetoken {
             epoch = epoch + 1;
         };
 
+        let event_info = borrow_global_mut<VeTokenEvents<CoinType>>(account_address<CoinType>());
         event::emit_event<VeTokenLockEvent<CoinType>>(
-            &mut vetoken_info.events.lock_events, VeTokenLockEvent {
+            &mut event_info.lock_events, VeTokenLockEvent {
                 epoch: now_epoch,
                 locked_amount: amount,
                 locked_epochs,
@@ -219,19 +217,19 @@ module vetoken::vetoken {
     }
 
     /// Extend the period in which the `VeToken` remains locked
-    public entry fun increase_lock_duration<CoinType>(account: &signer, increment_epochs: u64) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    public entry fun increase_lock_duration<CoinType>(account: &signer, increment_epochs: u64) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         assert!(increment_epochs > 0, ERR_VETOKEN_INVALID_LOCK_DURATION);
         increase_lock_amount_and_duration(account, coin::zero<CoinType>(), increment_epochs);
     }
 
     /// Extend how much `CoinType` is locked within `VeToken`.
-    public fun increase_lock_amount<CoinType>(account: &signer, coin: Coin<CoinType>) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    public fun increase_lock_amount<CoinType>(account: &signer, coin: Coin<CoinType>) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         assert!(coin::value(&coin) > 0, ERR_VETOKEN_ZERO_LOCK_AMOUNT);
         increase_lock_amount_and_duration(account, coin, 0);
     }
 
     /// Extend both the amount of `CoinType` locked within `VeToken` as well as the lock duration.
-    public fun increase_lock_amount_and_duration<CoinType>(account: &signer, coin: Coin<CoinType>, increment_epochs: u64) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    public fun increase_lock_amount_and_duration<CoinType>(account: &signer, coin: Coin<CoinType>, increment_epochs: u64) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         assert!(initialized<CoinType>(), ERR_VETOKEN_UNINITIALIZED);
 
         let account_addr = signer::address_of(account);
@@ -280,10 +278,11 @@ module vetoken::vetoken {
             epoch = epoch + 1;
         };
 
+        let event_info = borrow_global_mut<VeTokenEvents<CoinType>>(account_address<CoinType>());
         event::emit_event<VeTokenUpdateEvent<CoinType>>(
-            &mut vetoken_info.events.update_events, VeTokenUpdateEvent {
+            &mut event_info.update_events, VeTokenUpdateEvent {
                 epoch: now_epoch,
-                previously_locked_amount: locked_amount,
+                prev_locked_amount: locked_amount,
                 locked_amount: locked_amount + added_amount,
                 peviously_unlockable_epoch: old_unlockable_epoch,
                 unlockable_epoch: new_unlockable_epoch
@@ -295,7 +294,7 @@ module vetoken::vetoken {
     }
 
     /// Unlock a `VeToken` that reached `unlockable_epoch`.
-    public fun unlock<CoinType>(account: &signer): Coin<CoinType> acquires VeTokenInfo, VeTokenStore {
+    public fun unlock<CoinType>(account: &signer): Coin<CoinType> acquires VeTokenInfo, VeTokenStore, VeTokenEvents {
         let account_addr = signer::address_of(account);
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
 
@@ -303,10 +302,10 @@ module vetoken::vetoken {
 
         let epoch = now_epoch<CoinType>();
         let vetoken_store = borrow_global_mut<VeTokenStore<CoinType>>(account_addr);
-        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
 
+        let event_info = borrow_global_mut<VeTokenEvents<CoinType>>(account_address<CoinType>());
         event::emit_event<VeTokenUnlockEvent<CoinType>>(
-            &mut vetoken_info.events.unlock_events, VeTokenUnlockEvent {
+            &mut event_info.unlock_events, VeTokenUnlockEvent {
                 epoch,  
                 unlocked_amount: (coin::value(&vetoken_store.vetoken.locked) as u128),
                 unlockable_epoch: vetoken_store.vetoken.unlockable_epoch
@@ -325,7 +324,7 @@ module vetoken::vetoken {
     /// since no additional operations are required for delegate balances to be reflected correctly.
     ///
     /// @note in order to disable delgation, simply self-delegate, delegate == address_of(account)
-    public fun delegate_to<CoinType>(account: &signer, delegate: address) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    public fun delegate_to<CoinType>(account: &signer, delegate: address) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         let account_addr = signer::address_of(account);
         assert!(is_account_registered<CoinType>(account_addr), ERR_VETOKEN_ACCOUNT_UNREGISTERED);
         assert!(is_account_registered<CoinType>(delegate), ERR_VETOKEN_DELEGATE_UNREGISTERED);
@@ -356,10 +355,10 @@ module vetoken::vetoken {
             epoch = epoch + 1;
         };
 
-        let vetoken_info = borrow_global_mut<VeTokenInfo<CoinType>>(account_address<CoinType>());
+        let event_info = borrow_global_mut<VeTokenEvents<CoinType>>(account_address<CoinType>());
 
         event::emit_event<VeTokenDelegateEvent<CoinType>>(
-            &mut vetoken_info.events.delegate_events, VeTokenDelegateEvent {
+            &mut event_info.delegate_events, VeTokenDelegateEvent {
                 epoch,  
                 delegated_amount: locked_amount,
                 unlockable_epoch: vetoken_store.vetoken.unlockable_epoch,
@@ -557,7 +556,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun lock_unlock_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun lock_unlock_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 52);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -587,7 +586,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun lock_max_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun lock_max_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 52);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -600,7 +599,7 @@ module vetoken::vetoken {
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
     #[expected_failure(abort_code = ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH)]
-    fun lock_beyond_max_invalid_unlockable_epoch_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun lock_beyond_max_invalid_unlockable_epoch_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 52);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -612,7 +611,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun lock_below_min_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun lock_below_min_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 52);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -625,7 +624,7 @@ module vetoken::vetoken {
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
     #[expected_failure(abort_code = ERR_VETOKEN_INVALID_UNLOCKABLE_EPOCH)]
-    fun lock_below_min_invalid_unlockable_epoch_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun lock_below_min_invalid_unlockable_epoch_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 2, 52);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -638,7 +637,7 @@ module vetoken::vetoken {
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
     #[expected_failure(abort_code = ERR_VETOKEN_CANNOT_UNLOCK)]
-    fun early_unlock_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun early_unlock_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 52);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -654,7 +653,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun increase_lock_duration_and_preview_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun increase_lock_duration_and_preview_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 5);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -682,7 +681,7 @@ module vetoken::vetoken {
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
     #[expected_failure(abort_code = ERR_VETOKEN_INVALID_LOCK_DURATION)]
-    fun increase_lock_duration_invalid_lock_duration_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun increase_lock_duration_invalid_lock_duration_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 5);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -697,7 +696,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun increase_lock_amount_and_preview_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun increase_lock_amount_and_preview_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 5);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -725,7 +724,7 @@ module vetoken::vetoken {
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
     #[expected_failure(abort_code = ERR_VETOKEN_ZERO_LOCK_AMOUNT)]
-    fun increase_lock_amount_zero_amount_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun increase_lock_amount_zero_amount_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 5);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -740,7 +739,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun increase_lock_amount_and_duration_and_preview_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun increase_lock_amount_and_duration_and_preview_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 5);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -761,7 +760,7 @@ module vetoken::vetoken {
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
     #[expected_failure(abort_code = ERR_VETOKEN_INVALID_LOCK_INCREASE)]
-    fun increase_lock_amount_and_duration_invalid_increase_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun increase_lock_amount_and_duration_invalid_increase_err(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 5);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -776,7 +775,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun balance_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun balance_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 3);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -830,7 +829,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun past_balance_and_supply_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun past_balance_and_supply_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -897,7 +896,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun delegate_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun delegate_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -930,7 +929,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun delegate_nontransitive_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun delegate_nontransitive_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -955,7 +954,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun delegate_changes_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun delegate_changes_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
 
         let u1 = &account::create_account_for_test(@0xA);
@@ -981,7 +980,7 @@ module vetoken::vetoken {
     }
 
     #[test(aptos_framework = @aptos_framework, vetoken = @vetoken)]
-    fun past_delegated_balance_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations {
+    fun past_delegated_balance_ok(aptos_framework: &signer, vetoken: &signer) acquires VeTokenInfo, VeTokenStore, VeTokenDelegations, VeTokenEvents {
         initialize_for_test(aptos_framework, vetoken, 1, 4);
 
         let u1 = &account::create_account_for_test(@0xA);
