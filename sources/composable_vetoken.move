@@ -280,6 +280,7 @@ module vetoken::composable_vetoken {
 
     #[test_only]
     fun initialize_for_test(aptos_framework: &signer, vetoken: &signer, min_locked_epochs: u64, max_locked_epochs: u64) {
+        account::create_account_for_test(signer::address_of(vetoken));
         vetoken::initialize<FakeCoinA>(vetoken, min_locked_epochs, max_locked_epochs, SECONDS_IN_WEEK);
         vetoken::initialize<FakeCoinB>(vetoken, min_locked_epochs, max_locked_epochs, SECONDS_IN_WEEK);
 
@@ -297,6 +298,7 @@ module vetoken::composable_vetoken {
     #[test(vetoken = @vetoken)]
     #[expected_failure(abort_code = ERR_VETOKEN_UNINITIALIZED)]
     fun composable_vetoken_vetoken_cointype_a_uninitialized_err(vetoken: &signer) {
+        account::create_account_for_test(signer::address_of(vetoken));
         vetoken::initialize<FakeCoinB>(vetoken, 1, 4, SECONDS_IN_WEEK);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 50, 50, true);
     }
@@ -304,6 +306,7 @@ module vetoken::composable_vetoken {
     #[test(vetoken = @vetoken)]
     #[expected_failure(abort_code = ERR_VETOKEN_UNINITIALIZED)]
     fun composable_vetoken_vetoken_cointype_b_uninitialized_err(vetoken: &signer) {
+        account::create_account_for_test(signer::address_of(vetoken));
         vetoken::initialize<FakeCoinA>(vetoken, 1, 4, SECONDS_IN_WEEK);
         initialize<FakeCoinA, FakeCoinB>(vetoken, 50, 50, true);
     }
